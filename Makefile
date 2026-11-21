@@ -1,4 +1,4 @@
-.PHONY: envcheck build test dev dev-synth web decoders
+.PHONY: envcheck build test dev dev-synth web decoders metadata
 
 envcheck:
 	@bash scripts/envcheck.sh
@@ -24,3 +24,7 @@ dev-synth: dev
 # build decoders not in Homebrew (radiosonde, UAT 978, dsd-fme) into ~/.local/share/sweep/bin
 decoders:
 	@bash scripts/install-decoders.sh
+
+# bulk-download the public datasets used to name aircraft, airlines and satellites (docs/metadata.md)
+metadata:
+	@bash scripts/fetch-metadata.sh

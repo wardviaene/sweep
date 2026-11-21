@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/wardviaene/sweep/internal/meta"
 )
 
 // ---- APRS (TNC2 monitor format from direwolf) ----
@@ -99,7 +101,9 @@ type aircraft struct {
 	Squawk   string   `json:"squawk,omitempty"`
 	Seen     float64  `json:"seen"`
 	Messages int      `json:"messages"`
-	last     time.Time
+	// country, registration, type, year, airline and flight_number (docs/metadata.md)
+	meta.AircraftInfo
+	last time.Time
 }
 
 type aircraftTable struct{ m map[string]*aircraft }

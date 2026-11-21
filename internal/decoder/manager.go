@@ -13,8 +13,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wardviaene/sweep/internal/meta"
 	"github.com/wardviaene/sweep/internal/radio"
 )
+
+// Meta enriches decoded data from offline datasets (see docs/metadata.md).
+// It is optional; *meta.DB implements it.
+type Meta interface {
+	// Aircraft names an aircraft from its Mode S hex and callsign.
+	Aircraft(hex, callsign string) meta.AircraftInfo
+	// VisibleSatellite finds the satellite above the horizon with a downlink near freqHz.
+	VisibleSatellite(freqHz float64) (norad int, name string, ok bool)
+}
 
 // Names of the supported decoders.
 var Names = []string{"rtl_433", "meters", "adsb", "uat", "aprs", "ais", "packet", "radiosonde", "dsd"}
@@ -47,6 +57,7 @@ type Manager struct {
 	MeterIDs func() []string                    // utility meters the user owns; all others are hidden
 	Audio    radio.AudioSink                    // where decoded digital voice (dsd) is sent
 	ToolDirs []string                           // extra directories searched for decoder binaries
+	Meta     Meta                               // optional: adds country, registration, airline, satellite names
 
 	mu   sync.Mutex
 	cur  *run
@@ -308,4 +319,51 @@ func amateurBand(f uint32) bool {
 		}
 	}
 	return false
+}
+
+// enrichAircraft adds the metadata fields to every aircraft of a snapshot.
+func (m *Manager) enrichAircraft(ac []aircraft) {
+	if m.Meta == nil {
+		return
+	}
+	for i := range ac {
+		ac[i].AircraftInfo = m.Meta.Aircraft(ac[i].Hex, ac[i].Flight)
+	}
+}
+
+// enrichAircraftMap does the same for uat aircraft (maps shaped like the adsb snapshot).
+func (m *Manager) enrichAircraftMap(a map[string]any) {
+	if m.Meta == nil {
+		return
+	}
+	hex, _ := a["hex"].(string)
+	flight, _ := a["flight"].(string)
+	info := m.Meta.Aircraft(hex, flight)
+	if info.Country != "" {
+		a["country"] = info.Country
+	}
+	if info.Registration != "" {
+		a["registration"] = info.Registration
+	}
+	if info.Type != "" {
+		a["type"] = info.Type
+	}
+	if info.Year != 0 {
+		a["year"] = info.Year
+	}
+	if info.Airline != nil {
+		a["airline"] = map[string]any{"icao": info.Airline.ICAO, "name": info.Airline.Name, "radio": info.Airline.Radio}
+		a["flight_number"] = info.FlightNumber
+	}
+}
+
+// tagSatellite adds satellite {norad, name} to a packet message when a satellite
+// with a downlink near freqHz is above the horizon.
+func (m *Manager) tagSatellite(msg map[string]any, freqHz uint32) {
+	if m.Meta == nil {
+		return
+	}
+	if norad, name, ok := m.Meta.VisibleSatellite(float64(freqHz)); ok {
+		msg["satellite"] = map[string]any{"norad": norad, "name": name}
+	}
 }

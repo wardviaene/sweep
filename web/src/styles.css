@@ -234,5 +234,31 @@ button.primary:disabled { border-color: var(--border); color: var(--dim); }
 .sv-samples li { overflow-wrap: anywhere; }
 .sv-peak { display: flex; gap: 8px; align-items: center; padding: 1px 0; }
 .sv-peak .mhz { color: var(--ok); }
+.sv-listen { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
+.sv-listen label.chk { flex-direction: row; align-items: center; gap: 6px; }
+.sv-nudge { color: var(--warn); }
+.sv-now { margin: 0 0 8px; padding: 8px 10px; border: 1px solid var(--ok); border-radius: 4px; color: var(--ok); font-size: 16px; font-weight: 600; background: rgba(79, 209, 197, 0.1); }
+.sv-listened { color: var(--ok); }
 .spin { display: inline-block; width: 9px; height: 9px; border: 2px solid var(--border); border-top-color: var(--ok); border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* metadata */
+.acdetail { flex: none; max-height: 40%; overflow: auto; padding: 4px 8px; border-bottom: 1px solid var(--border); background: var(--bg); }
+.acdetail-head { display: flex; gap: 10px; align-items: baseline; margin-bottom: 2px; }
+.acdetail a, .datasrc a { color: var(--ok); }
+.datasrc { flex: none; padding: 2px 8px; border-top: 1px solid var(--border); }
+.lbl { color: var(--warn); }
+.sat { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+.sat-top { flex: none; display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 6px 10px; align-items: flex-start; }
+.sat-over { flex: 1 1 360px; min-width: 0; }
+.skyplot { flex: none; background: var(--bg); border: 1px solid var(--border); }
+.sat-sec { padding: 4px 10px; }
+.sat-sec h4 { margin: 0 0 3px; font-weight: 400; color: var(--dim); text-transform: uppercase; font-size: 10px; }
+.sat table { border-collapse: collapse; width: 100%; }
+.sat th { text-align: left; color: var(--dim); font-weight: 400; text-transform: uppercase; font-size: 10px; padding: 1px 8px 1px 0; border-bottom: 1px solid var(--border); }
+.sat td { padding: 1px 8px 1px 0; vertical-align: top; }
+.sat tr.now td { background: rgba(79, 209, 197, 0.14); }
+.dlrow { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline; white-space: nowrap; }
+
+.sv-plan-all { float: right; text-transform: none; letter-spacing: 0; }
+.warn-inline { color: #f6ad55; font-size: 11px; }

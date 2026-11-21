@@ -124,8 +124,15 @@ export function planSurvey(cat: Catalog, region: string, ant: Antenna, includeFa
     const f = antennaFit(ant, b.tune_mhz);
     return f === "good" || (includeFair && f === "fair");
   });
+  // Same id rule as sdrd: `<decoder>@<band>` when the decoder appears in more
+  // than one band of the region's catalog (not just of this plan), so ids stay
+  // stable whatever the antenna or ticked steps.
   const counts = new Map<string, number>();
-  for (const b of eligible) if (b.decoder) counts.set(b.decoder, (counts.get(b.decoder) ?? 0) + 1);
+  for (const b of cat.bands) {
+    if (b.decoder && b.regions.includes(region) && !(b.hf && ant.id !== "hfwire")) {
+      counts.set(b.decoder, (counts.get(b.decoder) ?? 0) + 1);
+    }
+  }
   const out: PlanStep[] = [];
   for (const b of eligible) {
     const [lo, hi] = bandRange(b, region);

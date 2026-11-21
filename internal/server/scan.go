@@ -32,6 +32,7 @@ func scanHandler(d Deps) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		labelPeaks(d.Meta, res.Peaks)
 		writeJSON(w, http.StatusOK, res)
 	}
 }

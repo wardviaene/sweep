@@ -18,6 +18,7 @@ import (
 
 	"github.com/wardviaene/sweep/internal/config"
 	"github.com/wardviaene/sweep/internal/decoder"
+	"github.com/wardviaene/sweep/internal/meta"
 	"github.com/wardviaene/sweep/internal/radio"
 	"github.com/wardviaene/sweep/internal/server"
 	"github.com/wardviaene/sweep/internal/source"
@@ -33,6 +34,7 @@ func main() {
 	gain := flag.String("gain", "29.7", "initial tuner gain in dB, or auto (auto lifts the noise floor on the R820T)")
 	cfgPath := flag.String("config", config.DefaultPath(), "local config file (receiver location); keep it out of the repo")
 	toolDir := flag.String("tool-dir", defaultToolDir(), "directory searched first for decoder binaries (scripts/install-decoders.sh)")
+	dbDir := flag.String("db-dir", defaultDBDir(), "directory with the metadata datasets (make metadata); read offline, missing data is fine")
 	recDir := flag.String("record-dir", "recordings", "directory for IQ recordings (POST /api/record)")
 	iqFreq := flag.Float64("iq-freq", 0, "with -iq: center frequency of the recording in Hz (default: from the file name)")
 	flag.StringVar(&cfg.File, "iq", "", "play back a cu8 recording (looping) instead of using the dongle")
@@ -111,8 +113,23 @@ func main() {
 		return 0, 0, false
 	}
 	defer decoders.Stop()
-	deps := server.Deps{Radio: r, Hub: hub, Audio: audio, Decoders: decoders, Events: events, RecordDir: *recDir, Config: store,
-		Survey: survey.New(survey.Deps{Radio: r, Spectrum: hub, Decoders: decoders, Config: store})}
+	// Metadata loads in the background; sdrd does not wait for it.
+	db := meta.New(*dbDir, func() (meta.Observer, bool) {
+		if r := store.Get().Receiver; r != nil {
+			o := meta.Observer{Lat: r.Lat, Lon: r.Lon}
+			if r.AltM != nil {
+				o.AltM = *r.AltM
+			}
+			return o, true
+		}
+		return meta.Observer{}, false
+	})
+	if *dbDir != "" {
+		db.Start()
+	}
+	decoders.Meta = db
+	deps := server.Deps{Radio: r, Hub: hub, Audio: audio, Decoders: decoders, Events: events, RecordDir: *recDir, Config: store, Meta: db,
+		Survey: survey.New(survey.Deps{Radio: r, Spectrum: hub, Decoders: decoders, Config: store, Label: db.Label})}
 	if *web != "" {
 		if st, err := os.Stat(*web); err == nil && st.IsDir() {
 			deps.Static = os.DirFS(*web)
@@ -156,4 +173,12 @@ func defaultToolDir() string {
 		return ""
 	}
 	return home + "/.local/share/sweep/bin"
+}
+
+func defaultDBDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home + "/.local/share/sweep/db"
 }

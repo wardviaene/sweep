@@ -18,6 +18,7 @@ import { UatView } from "./UatView";
 import { SondeView } from "./SondeView";
 import { DsdView } from "./DsdView";
 import { MetersView } from "./MetersView";
+import { SatellitesView } from "./SatellitesView";
 
 type Pick = DecoderName | "none";
 const PICKS: Pick[] = ["none", "rtl_433", "meters", "adsb", "uat", "aprs", "ais", "packet", "radiosonde", "dsd"];
@@ -54,12 +55,15 @@ interface Props {
   onOpenSurvey: () => void;
   /** set by the survey to select a decoder view and expand the panel; seq makes repeats distinct */
   focus: { decoder: DecoderName; seq: number } | null;
+  /** tune to hz and demodulate NFM (satellite downlinks) */
+  onListen: (hz: number) => void;
 }
 
-export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, meterIds, receiver, registerCenter, onOpenSettings, surveyLine, onOpenSurvey, focus }: Props) {
+export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, meterIds, receiver, registerCenter, onOpenSettings, surveyLine, onOpenSurvey, focus, onListen }: Props) {
   const [open, setOpen] = useState(true);
   const [expanded, setExpanded] = useState(loadExpanded);
   const [tab, setTab] = useState<"view" | "raw">("view");
+  const [section, setSection] = useState<"decoders" | "satellites">("decoders");
   const [pick, setPick] = useState<Pick>("none");
   const dec = status?.decoder;
   const running = !!dec?.running && dec.name !== "none";
@@ -96,6 +100,7 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
   useEffect(() => {
     if (!focus) return;
     setPick(focus.decoder);
+    setSection("decoders");
     setTab("view");
     setOpen(true);
   }, [focus?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -128,6 +133,11 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
         <button className={expanded ? "on" : ""} disabled={!open} onClick={toggleSize} title={expanded ? "Smaller decoder area" : "Larger decoder area"}>
           {expanded ? "⤡" : "⤢"}
         </button>
+        <span className="seg">
+          <button className={section === "decoders" ? "on" : ""} onClick={() => setSection("decoders")}>decoders</button>
+          <button className={section === "satellites" ? "on" : ""} onClick={() => setSection("satellites")}>satellites</button>
+        </span>
+        {section === "decoders" && (<>
         <span className="label">decoder</span>
         <select value={pick} onChange={(e) => setPick(e.target.value as Pick)}>
           {PICKS.map((d) => (
@@ -170,6 +180,7 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
             <button className={tab === "raw" ? "on" : ""} onClick={() => setTab("raw")}>raw</button>
           </span>
         )}
+        </>)}
         <span className="item">
           {dec ? (
             <>
@@ -186,7 +197,25 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
           <button className="linkbtn" onClick={onOpenSurvey} title="Open the survey">{surveyLine}</button>
         )}
       </div>
-      {open && (
+      {open && section === "satellites" && (
+        <div className="dec-body">
+          <SatellitesView
+            active={open && section === "satellites"}
+            receiver={receiver}
+            onOpenSettings={onOpenSettings}
+            onListen={onListen}
+            onDecode={(hz, b) => {
+              setBaud(b);
+              setStartedBaud(b);
+              setPick("packet");
+              setSection("decoders");
+              setTab("view");
+              onSet("packet", { freq_hz: hz, baud: b });
+            }}
+          />
+        </div>
+      )}
+      {open && section === "decoders" && (
         <div className="dec-body">
           {(decError || (dec?.error && !running)) && <div className="decerr">{decError ?? dec?.error}</div>}
           <div className="loglines">

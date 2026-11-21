@@ -176,3 +176,51 @@ func TestSurveyStop(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func runSurvey(t *testing.T, e *testEnv, body map[string]any) survey.State {
+	t.Helper()
+	if code, b := e.do(t, "POST", "/api/survey", body); code != 202 {
+		t.Fatalf("start: %d %s", code, b)
+	}
+	var st survey.State
+	waitFor(t, func() bool {
+		_, b := e.do(t, "GET", "/api/survey", nil)
+		st = survey.State{}
+		return json.Unmarshal(b, &st) == nil && st.State != "running"
+	})
+	if st.State != "done" {
+		t.Fatalf("final state: %+v", st)
+	}
+	return st
+}
+
+func TestSurveyListen(t *testing.T) {
+	e := newEnv(t)
+	if code, _ := e.do(t, "POST", "/api/survey", map[string]any{"listen_seconds": 1}); code != 400 {
+		t.Fatalf("listen_seconds range: %d", code)
+	}
+	_, _ = e.radio.SetDemod(radio.DemodRequest{Mode: ptr("am"), FreqHz: ptr(uint32(440_100_000))})
+	before := e.radio.Status()
+
+	st := runSurvey(t, e, map[string]any{"antenna": "wideband", "steps": []string{"scan:70cm"}, "listen_seconds": 2})
+	l := st.Steps[0].Listened
+	if !st.Listen || l == nil || l.Mode != "nfm" || l.Seconds < 1.5 || l.Seconds > 3 ||
+		l.FreqHz < 433_915_000 || l.FreqHz > 433_925_000 {
+		t.Fatalf("listened: %+v (step %+v)", l, st.Steps[0])
+	}
+	if st.Steps[0].Seconds >= 10 && st.Steps[0].Seconds-l.Seconds < 0 {
+		t.Errorf("step seconds include listen time: %+v", st.Steps[0])
+	}
+	if st.Listening != nil {
+		t.Errorf("still listening: %+v", st.Listening)
+	}
+	after := e.radio.Status()
+	if after.CenterHz != before.CenterHz || after.Demod.Mode != "am" || after.Demod.FreqHz != before.Demod.FreqHz {
+		t.Errorf("not restored:\nbefore %+v\nafter  %+v", before, after)
+	}
+
+	st = runSurvey(t, e, map[string]any{"antenna": "wideband", "steps": []string{"scan:70cm"}, "listen": false})
+	if st.Listen || st.Steps[0].Listened != nil {
+		t.Errorf("listen:false still listened: %+v", st.Steps[0])
+	}
+}

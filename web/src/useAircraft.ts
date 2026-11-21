@@ -12,6 +12,15 @@ export interface Aircraft {
   seen: number | null;
   messages: number | null;
   rssi: number | null;
+  country: string;
+  registration: string;
+  /** make/model, e.g. "BOEING 737-800" */
+  type: string;
+  year: number | null;
+  airline: string;
+  /** airline radio callsign (telephony) */
+  radio: string;
+  flightNumber: string;
   /** +1 climbing, -1 descending, 0 level/unknown */
   trend: -1 | 0 | 1;
   /** last [lat, lon] positions (client side) */
@@ -47,12 +56,25 @@ function apply(model: Model, e: DecEvent): boolean {
     if (!r) {
       r = {
         hex, flight: "", alt: null, gs: null, track: null, lat: null, lon: null, seen: null, messages: null, rssi: null,
+        country: "", registration: "", type: "", year: null, airline: "", radio: "", flightNumber: "",
         trend: 0, trail: [], snapTs: e.ts, lastAlt: null, still: 0,
       };
       model.m.set(hex, r);
     }
     r.snapTs = e.ts;
     if (typeof raw.flight === "string" && raw.flight.trim()) r.flight = raw.flight.trim();
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    r.country = str(raw.country) || r.country;
+    r.registration = str(raw.registration) || r.registration;
+    r.type = str(raw.type) || r.type;
+    r.year = numOrNull(raw.year) ?? r.year;
+    r.flightNumber = str(raw.flight_number) || r.flightNumber;
+    const al = raw.airline;
+    if (al && typeof al === "object") {
+      const a = al as Record<string, unknown>;
+      r.airline = str(a.name) || r.airline;
+      r.radio = str(a.radio) || r.radio;
+    }
     const alt = raw.alt_baro === "ground" ? "ground" : numOrNull(raw.alt_baro);
     r.alt = alt ?? r.alt;
     if (typeof alt === "number") {
@@ -97,7 +119,8 @@ export function useAircraft(events: DecEvent[], decoder: "adsb" | "uat" = "adsb"
     (model) => {
       // Fresh objects so consumers can compare by reference; trails are copied (bounded at 60).
       const aircraft = [...model.m.values()].map((r): Aircraft => ({
-        hex: r.hex, flight: r.flight, alt: r.alt, gs: r.gs, track: r.track, lat: r.lat, lon: r.lon,
+        hex: r.hex, flight: r.flight, country: r.country, registration: r.registration, type: r.type, year: r.year,
+        airline: r.airline, radio: r.radio, flightNumber: r.flightNumber, alt: r.alt, gs: r.gs, track: r.track, lat: r.lat, lon: r.lon,
         seen: r.seen, messages: r.messages, rssi: r.rssi, trend: r.trend, trail: r.trail.slice(),
       }));
       return { aircraft, withPos: aircraft.filter((a) => a.lat !== null).length };

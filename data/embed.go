@@ -7,3 +7,9 @@ import _ "embed"
 //
 //go:embed bands.json
 var Bands []byte
+
+// ICAOCountries is icao_countries.json: ICAO 24-bit (Mode S) address blocks per
+// country, from the ICAO Annex 10 Vol III allocations.
+//
+//go:embed icao_countries.json
+var ICAOCountries []byte

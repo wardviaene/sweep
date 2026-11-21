@@ -18,15 +18,56 @@ import (
 
 // Band is a catalog band (the fields the survey needs).
 type Band struct {
-	ID      string               `json:"id"`
-	Name    string               `json:"name"`
-	Regions []string             `json:"regions"`
-	LoMHz   float64              `json:"lo_mhz"`
-	HiMHz   float64              `json:"hi_mhz"`
-	Edges   map[string][]float64 `json:"edges"`
-	TuneMHz float64              `json:"tune_mhz"`
-	HF      bool                 `json:"hf"`
-	Decoder *string              `json:"decoder"`
+	ID       string               `json:"id"`
+	Name     string               `json:"name"`
+	Regions  []string             `json:"regions"`
+	LoMHz    float64              `json:"lo_mhz"`
+	HiMHz    float64              `json:"hi_mhz"`
+	Edges    map[string][]float64 `json:"edges"`
+	TuneMHz  float64              `json:"tune_mhz"`
+	HF       bool                 `json:"hf"`
+	Decoder  *string              `json:"decoder"`
+	Mode     string               `json:"mode"` // nfm | am | usb | lsb | none
+	Channels []struct {
+		MHz float64 `json:"mhz"`
+	} `json:"channels"`
+}
+
+// listenMode is the demod mode used to listen to a band ("" = not a voice band).
+func (b Band) listenMode() string {
+	switch b.Mode {
+	case "nfm", "am", "usb", "lsb":
+		return b.Mode
+	}
+	return ""
+}
+
+// listenGrid is the frequency rounding (Hz) when listening to a carrier of the band:
+// 100 Hz for SSB, 5 kHz for FM/AM channels (6.25 kHz when the catalog channels sit on
+// that raster instead), 1 kHz below 30 MHz.
+func (b Band) listenGrid() float64 {
+	switch b.Mode {
+	case "usb", "lsb":
+		return 100
+	}
+	if b.LoMHz < 30 {
+		return 1000
+	}
+	on := func(hz, grid float64) bool { r := math.Mod(hz, grid); return r < 1 || grid-r < 1 }
+	all5, all625, any := true, true, false
+	for _, c := range b.Channels {
+		hz := c.MHz * 1e6
+		any = true
+		all5 = all5 && on(hz, 5000)
+		all625 = all625 && on(hz, 6250)
+	}
+	switch {
+	case any && !all5 && all625:
+		return 6250
+	case any && !all5:
+		return 100
+	}
+	return 5000
 }
 
 // Antenna lists the MHz ranges where an antenna works well (good) or so-so (fair).
@@ -117,11 +158,33 @@ type Step struct {
 	Samples  []any      `json:"samples,omitempty"`
 	Error    string     `json:"error,omitempty"`
 	Reason   string     `json:"reason,omitempty"`
+	Listened *Listened  `json:"listened,omitempty"`
 
 	fit    string // antenna fit of the band's tune frequency
 	secs   int    // decoder: how long to listen
 	opt    decoder.Options
-	tuneHz uint32 // decoder: center to tune to before starting (rtl_433 picks its ISM band from it)
+	mode   string  // scan: demod mode used to listen to the strongest carrier ("" = none)
+	grid   float64 // scan: listen frequency rounding in Hz
+	tuneHz uint32  // decoder: center to tune to before starting (rtl_433 picks its ISM band from it)
+}
+
+// Listened is what a scan step played after its scan (listen hold).
+type Listened struct {
+	FreqHz  uint32  `json:"freq_hz"`
+	Mode    string  `json:"mode"`
+	Seconds float64 `json:"seconds"`
+	LevelDB float64 `json:"level_db"` // mean demod channel level over the hold
+	Label   string  `json:"label,omitempty"`
+}
+
+// Listening is set in State while a listen hold is active.
+type Listening struct {
+	Step    string  `json:"step"`
+	FreqHz  uint32  `json:"freq_hz"`
+	Mode    string  `json:"mode"`
+	Label   string  `json:"label,omitempty"`
+	Seconds int     `json:"seconds"` // planned hold
+	Started float64 `json:"started"` // unix seconds
 }
 
 // StepPeak is a carrier found by a scan step.
@@ -129,6 +192,7 @@ type StepPeak struct {
 	FreqHz float64 `json:"freq_hz"`
 	DB     float64 `json:"db"`
 	SNR    float64 `json:"snr_db"`
+	Label  string  `json:"label,omitempty"` // known channel or visible satellite (docs/metadata.md)
 }
 
 // carriers drops the RTL2832 crystal spurs.
@@ -202,7 +266,8 @@ func universe(c *Catalog, ant Antenna, region string, seconds int) []Step {
 			lo, hi = max(lo, e[0]), min(hi, e[1])
 		}
 		out = append(out, Step{ID: "scan:" + b.ID, Kind: "scan", Band: b.ID, Label: b.Name + ": band scan",
-			FreqLoHz: mhz(lo), FreqHiHz: mhz(hi), State: "pending", fit: fit})
+			FreqLoHz: mhz(lo), FreqHiHz: mhz(hi), State: "pending", fit: fit,
+			mode: b.listenMode(), grid: b.listenGrid()})
 		if b.Decoder == nil {
 			continue
 		}
@@ -283,7 +348,9 @@ func buildPlan(c *Catalog, antenna, region string, seconds int, includeFair bool
 }
 
 // estimate is the expected duration of the plan in seconds.
-func estimate(steps []Step, rate uint32) int {
+// listenS is the hold per voice-band scan step (0 = not listening); every such
+// step is assumed to find a carrier.
+func estimate(steps []Step, rate uint32, listenS int) int {
 	var t float64
 	for _, s := range steps {
 		switch {
@@ -291,6 +358,9 @@ func estimate(steps []Step, rate uint32) int {
 		case s.Kind == "scan":
 			n := math.Ceil(float64(s.FreqHiHz-s.FreqLoHz) / float64(scan.StepHz(rate)))
 			t += n*0.6 + 1
+			if s.mode != "" {
+				t += float64(listenS)
+			}
 		default:
 			t += float64(s.secs + 3)
 		}

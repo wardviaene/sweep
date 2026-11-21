@@ -37,7 +37,8 @@ export function sampleText(decoder: string | undefined, d: Rec): string {
       if (d.kind === "fisb" || d.report_type !== undefined) return clip([str(d.report_type), str(d.location)].filter(Boolean).join(" ") || "FIS-B report");
       const alt = d.alt_baro;
       const altS = typeof alt === "number" ? `${Math.round(alt)} ft` : str(alt);
-      return [str(d.flight) || str(d.hex), altS].filter(Boolean).join("  ");
+      const al = d.airline && typeof d.airline === "object" ? str((d.airline as Rec).name) : "";
+      return [str(d.flight) || str(d.registration) || str(d.hex), al, str(d.type), altS].filter(Boolean).join("  ");
     }
     case "rtl_433": {
       for (const [k, unit, suffix] of SENSOR_KEYS) {
@@ -52,7 +53,7 @@ export function sampleText(decoder: string | undefined, d: Rec): string {
     }
     case "aprs":
     case "packet":
-      return clip([str(d.from), str(d.comment) || str(d.info)].filter(Boolean).join("  "));
+      return clip([str(d.from), d.satellite && typeof d.satellite === "object" ? `via ${str((d.satellite as Rec).name)}` : "", str(d.comment) || str(d.info)].filter(Boolean).join("  "));
     case "ais":
       return str(d.name) || (d.mmsi !== undefined ? `MMSI ${str(d.mmsi)}` : "vessel");
     case "radiosonde": {
@@ -82,7 +83,13 @@ interface Props {
   onOpenDecoder: (step: SurveyStep) => void;
   onListen: (hz: number, mode: BandMode) => void;
   onTune: (hz: number) => void;
+  /** audio output state and toggle (the control bar's) */
+  audioOn?: boolean;
+  onAudioToggle?: () => void;
 }
+
+const DEFAULT_LISTEN_S = 8;
+const mhzStr = (hz: number) => (hz / 1e6).toFixed(3);
 
 export function SurveyPanel(p: Props) {
   const { open, catalog } = p;
@@ -94,6 +101,8 @@ export function SurveyPanel(p: Props) {
   const [region, setRegion] = useState(p.region);
   const [seconds, setSeconds] = useState(DEFAULT_SECONDS);
   const [fair, setFair] = useState(false);
+  const [listen, setListen] = useState(true);
+  const [listenS, setListenS] = useState(DEFAULT_LISTEN_S);
   const [off, setOff] = useState<Set<string>>(() => new Set());
   const [setupMode, setSetupMode] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -136,7 +145,7 @@ export function SurveyPanel(p: Props) {
   useEffect(() => setOff(new Set()), [planKey]);
   const runnable = plan.filter((s) => !s.skipped);
   const chosen = runnable.filter((s) => !off.has(s.id));
-  const estimate = chosen.reduce((t, s) => t + s.seconds, 0);
+  const estimate = chosen.reduce((t, s) => t + s.seconds, 0) + (listen ? listenS * chosen.filter((s) => s.band.mode !== "none" && s.id.startsWith("scan:")).length : 0);
 
   const running = survey?.state === "running";
   const hasResult = !!survey && survey.state !== "idle" && survey.steps.length > 0;
@@ -150,6 +159,8 @@ export function SurveyPanel(p: Props) {
       region,
       seconds,
       include_fair: fair,
+      listen,
+      ...(listen ? { listen_seconds: listenS } : {}),
       ...(chosen.length < runnable.length ? { steps: chosen.map((s) => s.id) } : {}),
     });
     if (ok) setSetupMode(false);
@@ -186,6 +197,13 @@ export function SurveyPanel(p: Props) {
       </div>
       <div className="sv-body">
         {sv.error && <div className="decerr">{sv.error}</div>}
+        {survey?.state === "running" && survey.listening && (
+          <div className="sv-now" role="status">
+            ▶ now playing {mhzStr(survey.listening.freq_hz)} MHz
+            <span className="dim"> {survey.listening.mode.toUpperCase()}{survey.listening.label ? ` · ${survey.listening.label}` : ""}</span>
+            {!p.audioOn && p.onAudioToggle && <span className="dim"> (audio is off)</span>}
+          </div>
+        )}
         {showSetup ? (
           <Setup
             catalog={catalog}
@@ -198,6 +216,12 @@ export function SurveyPanel(p: Props) {
             setSeconds={setSeconds}
             fair={fair}
             setFair={setFair}
+            listen={listen}
+            setListen={setListen}
+            listenS={listenS}
+            setListenS={setListenS}
+            audioOn={!!p.audioOn}
+            onAudioToggle={p.onAudioToggle}
             plan={plan}
             off={off}
             setOff={setOff}
@@ -251,6 +275,12 @@ function Setup(p: {
   setSeconds: (n: number) => void;
   fair: boolean;
   setFair: (b: boolean) => void;
+  listen: boolean;
+  setListen: (b: boolean) => void;
+  listenS: number;
+  setListenS: (n: number) => void;
+  audioOn: boolean;
+  onAudioToggle?: () => void;
   plan: ReturnType<typeof planSurvey>;
   off: Set<string>;
   setOff: (s: Set<string>) => void;
@@ -301,6 +331,28 @@ function Setup(p: {
         <label className="chk">
           <input type="checkbox" checked={p.fair} onChange={(e) => p.setFair(e.target.checked)} /> include off-tune bands
         </label>
+        <div className="sv-listen">
+          <label className="chk">
+            <input type="checkbox" checked={p.listen} onChange={(e) => p.setListen(e.target.checked)} /> Play what the survey hears
+            <input
+              type="number"
+              min={2}
+              max={30}
+              value={p.listenS}
+              disabled={!p.listen}
+              aria-label="seconds per voice band"
+              onChange={(e) => p.setListenS(Math.min(30, Math.max(2, Math.round(Number(e.target.value)) || DEFAULT_LISTEN_S)))}
+              style={{ width: "4.5em" }}
+            />
+            <span className="dim">s</span>
+          </label>
+          <span className="dim">turn audio on to hear each voice band's strongest carrier for {p.listenS} s</span>
+          {p.listen && !p.audioOn && p.onAudioToggle && (
+            <span className="sv-nudge">
+              Audio is off, so you will not hear it. <button type="button" className="mini" onClick={p.onAudioToggle}>Turn audio on</button>
+            </span>
+          )}
+        </div>
       </div>
       {!p.hasAnt && <div className="dim pad0">Choose your antenna to see the plan.</div>}
       {p.hasAnt && p.plan.length === 0 && (
@@ -308,7 +360,20 @@ function Setup(p: {
       )}
       {p.plan.length > 0 && (
         <>
-          <div className="label">plan{ant ? ` (${p.count} steps, about ${fmtDur(p.estimate)})` : ""}</div>
+          <div className="label">
+            plan{ant ? ` (${p.count} steps, about ${fmtDur(p.estimate)})` : ""}
+            <span className="sv-plan-all">
+              <button type="button" className="link" onClick={() => p.setOff(new Set())}>select all</button>
+              {" · "}
+              <button
+                type="button"
+                className="link"
+                onClick={() => p.setOff(new Set(p.plan.filter((s) => !s.skipped).map((s) => s.id)))}
+              >
+                deselect all
+              </button>
+            </span>
+          </div>
           <div className="sv-plan">
             {p.plan.map((s) => (
               <label key={s.id} className={`sv-plan-row ${s.skipped ? "dim" : ""}`} title={s.id}>
@@ -447,6 +512,16 @@ function StepCard(p: {
       </div>
       {s.state === "running" && <div className="dim">{found > 0 ? `${found} so far${s.summary ? ` · ${s.summary}` : ""}` : "listening…"}</div>}
       {s.state === "done" && s.summary && <div>{s.summary}</div>}
+      {s.listened && (
+        <div className="sv-listened">
+          ▶ listened {Math.round(s.listened.seconds)} s to {mhzStr(s.listened.freq_hz)} MHz {s.listened.mode.toUpperCase()} ({s.listened.level_db.toFixed(0).replace("-", "−")} dB)
+          {(() => {
+            const l = s.listened;
+            const lbl = l.label || s.peaks?.find((x) => Math.abs(x.freq_hz - l.freq_hz) < 5000 && x.label)?.label;
+            return lbl ? <span className="lbl"> {lbl}</span> : null;
+          })()}
+        </div>
+      )}
       {nothing && <div className="dim">{s.kind === "scan" ? "no carriers found" : `nothing heard in ${Math.round(s.seconds ?? 0)} s`}</div>}
       {s.state === "skipped" && <div className="dim">skipped{s.reason ? `: ${s.reason}` : ""}</div>}
       {s.state === "error" && <div className="err" style={{ margin: 0, whiteSpace: "pre-wrap" }}>{s.error ?? "error"}</div>}
@@ -462,6 +537,7 @@ function StepCard(p: {
           {peaks.map((pk) => (
             <div key={pk.freq_hz} className="sv-peak">
               <span className="mhz">{(pk.freq_hz / 1e6).toFixed(3)} MHz</span>
+              {pk.label && <span className="lbl" title="From the band catalog or a visible satellite downlink">{pk.label}</span>}
               <span className="dim">{Math.round(pk.snr_db)} dB SNR</span>
               <span style={{ flex: 1 }} />
               {mode !== "none" && (

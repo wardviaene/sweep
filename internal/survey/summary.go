@@ -188,7 +188,7 @@ func (c *collector) result() (found int, summary string, samples []any) {
 func scanResult(peaks []dsp.Peak) (found int, summary string, out []StepPeak) {
 	out = []StepPeak{}
 	for _, p := range peaks {
-		out = append(out, StepPeak{p.FreqHz, p.DB, p.SNR})
+		out = append(out, StepPeak{FreqHz: p.FreqHz, DB: p.DB, SNR: p.SNR, Label: p.Label})
 	}
 	found = len(out)
 	if found == 0 {

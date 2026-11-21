@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"sync"
 	"time"
 
@@ -26,6 +27,10 @@ type Request struct {
 	Seconds     int      `json:"seconds"` // per decoder step, 5..120, default 20
 	IncludeFair bool     `json:"include_fair"`
 	Steps       []string `json:"steps"`
+	// Listen plays the strongest carrier of each voice band after its scan (default true).
+	Listen *bool `json:"listen"`
+	// ListenSeconds is the hold per band, 2..30, default 8.
+	ListenSeconds int `json:"listen_seconds"`
 }
 
 // State is the GET /api/survey payload.
@@ -39,6 +44,10 @@ type State struct {
 	EstimatedS int     `json:"estimated_s"`
 	Error      string  `json:"error,omitempty"`
 	Steps      []Step  `json:"steps"`
+	// Listen and ListenSeconds echo the request; Listening is set during a listen hold.
+	Listen        bool       `json:"listen"`
+	ListenSeconds int        `json:"listen_seconds,omitempty"`
+	Listening     *Listening `json:"listening,omitempty"`
 }
 
 // Deps are what a survey drives.
@@ -47,6 +56,8 @@ type Deps struct {
 	Spectrum scan.Spectrum
 	Decoders *decoder.Manager
 	Config   *config.Store
+	// Label names a carrier frequency (catalog channel or visible satellite); optional.
+	Label func(freqHz float64) string
 }
 
 const scanDwellMS = 500
@@ -113,6 +124,13 @@ func (r *Runner) Start(req Request) (State, error) {
 	if req.Seconds < 5 || req.Seconds > 120 {
 		return State{}, errors.New("seconds must be 5..120")
 	}
+	listen := req.Listen == nil || *req.Listen
+	if req.ListenSeconds == 0 {
+		req.ListenSeconds = 8
+	}
+	if req.ListenSeconds < 2 || req.ListenSeconds > 30 {
+		return State{}, errors.New("listen_seconds must be 2..30")
+	}
 	steps, err := buildPlan(cat, req.Antenna, req.Region, req.Seconds, req.IncludeFair, req.Steps)
 	if err != nil {
 		return State{}, err
@@ -123,7 +141,9 @@ func (r *Runner) Start(req Request) (State, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.mu.Lock()
 	r.st = State{ID: r.st.ID + 1, State: "running", Antenna: req.Antenna, Region: req.Region,
-		Started: float64(time.Now().UnixMilli()) / 1e3, EstimatedS: estimate(steps, r.d.Radio.Status().SampleRate), Steps: steps}
+		Started: float64(time.Now().UnixMilli()) / 1e3, Steps: steps,
+		Listen: listen, ListenSeconds: req.ListenSeconds}
+	r.st.EstimatedS = estimate(steps, r.d.Radio.Status().SampleRate, map[bool]int{true: req.ListenSeconds}[listen])
 	r.t0, r.end, r.cancel, r.done = time.Now(), time.Time{}, cancel, make(chan struct{})
 	r.peaks = map[string][]dsp.Peak{}
 	done := r.done
@@ -165,6 +185,12 @@ func (r *Runner) run(ctx context.Context) {
 	p := prior{st: d.Radio.Status()}
 	p.decName, p.decOpt, p.decRun = d.Decoders.Current()
 	d.Decoders.Stop()
+	if r.Snapshot().Listen { // silence instead of the user's old VFO while scanning
+		off := "off"
+		if _, err := d.Radio.SetDemod(radio.DemodRequest{Mode: &off}); err != nil {
+			log.Printf("survey: vfo off: %v", err)
+		}
+	}
 
 	for i := range r.Snapshot().Steps {
 		if ctx.Err() != nil {
@@ -203,9 +229,15 @@ func (r *Runner) runStep(ctx context.Context, i int, p prior) {
 	})
 	t0 := time.Now()
 	var err error
+	var listenTime time.Duration
 	if s.State == "running" {
 		if s.Kind == "scan" {
 			err = r.scanStep(ctx, i, p)
+			if err == nil && r.Snapshot().Listen {
+				l0 := time.Now()
+				r.listenStep(ctx, i)
+				listenTime = time.Since(l0)
+			}
 		} else {
 			err = r.decoderStep(ctx, i)
 		}
@@ -221,7 +253,7 @@ func (r *Runner) runStep(ctx context.Context, i int, p prior) {
 			s.State = "done"
 		}
 		if s.State != "skipped" {
-			s.Seconds = round1(time.Since(t0).Seconds())
+			s.Seconds = round1((time.Since(t0) - listenTime).Seconds())
 		}
 	})
 	line := s.Label + ": " + s.Summary
@@ -255,9 +287,86 @@ func (r *Runner) scanStep(ctx context.Context, i int, p prior) error {
 	r.mu.Lock()
 	r.peaks[s.Band] = cs
 	r.mu.Unlock()
+	if d.Label != nil {
+		cs = append([]dsp.Peak(nil), cs...)
+		for i := range cs {
+			cs[i].Label = d.Label(cs[i].FreqHz)
+		}
+	}
 	found, summary, peaks := scanResult(cs)
 	r.update(i, func(s *Step) { s.Found, s.Summary, s.Peaks = &found, summary, peaks })
 	return nil
+}
+
+// listenStep plays the strongest carrier found by scan step i for the hold time
+// and records what was heard. The VFO is switched off again afterwards.
+func (r *Runner) listenStep(ctx context.Context, i int) {
+	d := r.d
+	s := r.Snapshot().Steps[i]
+	r.mu.Lock()
+	cs := r.peaks[s.Band]
+	hold := r.st.ListenSeconds
+	r.mu.Unlock()
+	if s.mode == "" || len(cs) == 0 {
+		return
+	}
+	best := cs[0]
+	for _, c := range cs {
+		if c.DB > best.DB {
+			best = c
+		}
+	}
+	freq := uint32(math.Round(best.FreqHz/s.grid) * s.grid)
+	mode := s.mode
+	if _, err := d.Radio.SetDemod(radio.DemodRequest{Mode: &mode, FreqHz: &freq, SetSquelch: true}); err != nil {
+		log.Printf("survey: listen %d Hz: %v", freq, err)
+		return
+	}
+	defer func() {
+		off := "off"
+		if _, err := d.Radio.SetDemod(radio.DemodRequest{Mode: &off}); err != nil {
+			log.Printf("survey: vfo off: %v", err)
+		}
+		r.mu.Lock()
+		r.st.Listening = nil
+		r.mu.Unlock()
+	}()
+	var label string
+	if d.Label != nil {
+		label = d.Label(best.FreqHz)
+	}
+	t0 := time.Now()
+	r.mu.Lock()
+	r.st.Listening = &Listening{Step: s.ID, FreqHz: freq, Mode: mode, Label: label, Seconds: hold,
+		Started: float64(t0.UnixMilli()) / 1e3}
+	r.mu.Unlock()
+	var sum float64
+	var n int
+	sample := func() {
+		sum += d.Radio.Status().Demod.LevelDB
+		n++
+	}
+	deadline := time.NewTimer(time.Duration(hold) * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(250 * time.Millisecond)
+	defer tick.Stop()
+	for done := false; !done; {
+		select {
+		case <-ctx.Done():
+			done = true
+		case <-deadline.C:
+			done = true
+		case <-tick.C:
+			sample()
+		}
+	}
+	if n == 0 {
+		sample()
+	}
+	r.update(i, func(s *Step) {
+		s.Listened = &Listened{FreqHz: freq, Mode: mode, Seconds: round1(time.Since(t0).Seconds()),
+			LevelDB: round1(sum / float64(n)), Label: label}
+	})
 }
 
 func (r *Runner) decoderStep(ctx context.Context, i int) error {

@@ -5,6 +5,7 @@ import type { SpectrumStream } from "./useSpectrum";
 import type { Meta } from "./spectrumSocket";
 import type { BandView } from "./bands";
 import type { DemodMode } from "./api";
+import { peakLabelNear } from "./meta";
 
 export interface Vfo {
   mode: DemodMode;
@@ -391,6 +392,8 @@ export function SpectrumView({ stream, meta, bandViews, vfo, onSetVfo, onTuneHz,
         }
         if (best) tip.textContent += `\n${best}`;
       }
+      const near = peakLabelNear(hz, (m.sample_rate / sr.width) * 6);
+      if (near) tip.textContent += `\n${near}`;
       const flip = x > sr.width - 170;
       tip.style.left = `${sr.left - wr.left + x + (flip ? -tip.offsetWidth - 8 : 10)}px`;
       tip.style.top = `${ev.clientY - wr.top + 12}px`;

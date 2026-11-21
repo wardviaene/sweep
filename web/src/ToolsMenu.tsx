@@ -5,6 +5,7 @@ import type { DemodApi } from "./useDemod";
 import type { Tuner } from "./useTuner";
 import { Popover } from "./Popover";
 import { parseFreq } from "./Controls";
+import { setPeakLabels } from "./meta";
 
 const mhzStr = (hz: number) => String(+(hz / 1e6).toFixed(4));
 
@@ -124,6 +125,8 @@ export function ToolsMenu(props: {
     p.sort((a, b) => sort.dir * (sort.key === "snr" ? a.snr_db - b.snr_db : a.freq_hz - b.freq_hz));
     return p;
   }, [result, sort]);
+  const hasLabels = useMemo(() => (result?.peaks ?? []).some((p) => p.label), [result]);
+  useEffect(() => setPeakLabels(result?.peaks ?? []), [result]);
   const hdr = (key: SortKey, label: string) => (
     <th className="sortable" onClick={() => setSort((s) => (s.key === key ? { key, dir: (-s.dir) as 1 | -1 } : { key, dir: key === "snr" ? -1 : 1 }))}>
       {label}
@@ -168,12 +171,13 @@ export function ToolsMenu(props: {
             <div className="tablewrap peaks">
               <table>
                 <thead>
-                  <tr>{hdr("freq", "MHz")}<th>dB</th>{hdr("snr", "SNR")}<th /></tr>
+                  <tr>{hdr("freq", "MHz")}{hasLabels && <th>label</th>}<th>dB</th>{hdr("snr", "SNR")}<th /></tr>
                 </thead>
                 <tbody>
                   {peaks.map((p) => (
                     <tr key={p.freq_hz} className="click" onClick={() => tuneTo(p.freq_hz)} title="Tune here">
                       <td>{(p.freq_hz / 1e6).toFixed(4)}</td>
+                      {hasLabels && <td className="lbl">{p.label ?? ""}</td>}
                       <td>{p.db.toFixed(1)}</td>
                       <td>{p.snr_db.toFixed(1)}</td>
                       <td>{p.spur && <span className="badge" title="Likely generated inside the dongle">spur</span>}</td>

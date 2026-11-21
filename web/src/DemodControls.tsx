@@ -120,6 +120,7 @@ export function DemodControls({ status, demod, audio }: { status: Status | null;
         <button className={audio.on ? "on" : ""} onClick={audio.toggle} title="Audio needs a click to start (browser policy)">
           audio {audio.on ? "on" : "off"}
         </button>{" "}
+        {audio.on && silentReason(status) && <span className="warn-inline">{silentReason(status)}</span>}{" "}
         <span className="label">vol</span>{" "}
         <input
           type="range"
@@ -137,4 +138,13 @@ export function DemodControls({ status, demod, audio }: { status: Status | null;
       {demod.error && <span className="err">{demod.error}</span>}
     </>
   );
+}
+
+/** Why audio is on but nothing will play, if there's an obvious reason. */
+function silentReason(status: Status | null): string {
+  if (!status) return "";
+  const dec = status.decoder;
+  if (dec?.running && dec.name === "dsd") return "digital voice only: silent until a DMR/D-STAR/YSF call (Listen to switch back)";
+  if ((status.demod?.mode ?? "off") === "off") return "demod off: pick a mode or click Listen on a channel";
+  return "";
 }

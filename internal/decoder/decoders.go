@@ -160,7 +160,9 @@ func (m *Manager) readSBS(ctx context.Context, addr string) {
 			}
 			tbl.applySBS(l, time.Now())
 		case now := <-tick.C:
-			m.ev.Publish("adsb", "snapshot", map[string]any{"aircraft": tbl.snapshot(now)})
+			snap := tbl.snapshot(now)
+			m.enrichAircraft(snap)
+			m.ev.Publish("adsb", "snapshot", map[string]any{"aircraft": snap})
 		}
 	}
 }
@@ -250,6 +252,9 @@ func (m *Manager) direwolf(ctx context.Context, st *Status, kind string, freq ui
 		}
 		if mm := direwolfLine.FindStringSubmatch(line); mm != nil && (kind == "aprs" || kind == "packet") {
 			if p, ok := parseAPRS(mm[1]); ok {
+				if kind == "packet" {
+					m.tagSatellite(p, freq)
+				}
 				m.ev.Publish(kind, "message", p)
 				continue
 			}

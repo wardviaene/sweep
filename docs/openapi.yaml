@@ -1,0 +1,1013 @@
+openapi: 3.1.0
+info:
+  title: sdrd API
+  version: "1.0"
+  summary: HTTP and WebSocket API of sdrd, the sweep RTL-SDR daemon.
+  description: |
+    `sdrd` owns an RTL-SDR dongle and exposes tuning, spectrum, a listening demodulator,
+    data decoders, scans, recordings and a survey over HTTP/JSON and three WebSocket streams.
+    The prose reference is `docs/api.md`; this file is the machine-readable REST contract.
+
+    **Security.** There is no authentication. `sdrd` listens on 127.0.0.1:8073 by default. Anyone who
+    can reach the port can tune the radio, read decoded data and read/write the local config file.
+    Put it behind an authenticating reverse proxy before exposing it. sdrd is receive-only.
+
+    **Conventions.** Frequencies in Hz, power in dB (relative, uncalibrated), durations in seconds.
+    Errors are `{"error": "..."}` with status 400 (bad input or impossible in the current state),
+    409 (radio owned by a survey, scan or recording), 500 (server failure). Request bodies are
+    limited to 4096 bytes. Unknown paths return a plain-text 404 and wrong methods a plain-text 405.
+
+    **Single owner.** One dongle, one center frequency for all clients, one decoder at a time,
+    one listening demodulator; scan, record and survey are mutually exclusive.
+
+    **WebSockets.** OpenAPI has no native WebSocket support, so they are described in the
+    `x-websockets` extension at the end of this document. All three are server-to-client only.
+    Browsers may connect only from localhost, 127.0.0.1 or [::1] origins (or the same host);
+    clients that send no Origin header (scripts, CLI tools) are accepted.
+
+    - `/ws/spectrum`: one JSON `meta` text frame, then binary frames of `bins` uint8 values.
+    - `/ws/audio`: JSON `audio` and `level` text frames, binary frames of mono s16le PCM.
+    - `/ws/events`: one JSON Event per text frame; the last 100 events are replayed on connect.
+  license:
+    name: See repository
+    identifier: NOASSERTION
+servers:
+  - url: http://127.0.0.1:8073
+    description: Default sdrd address (flag -addr)
+tags:
+  - name: radio
+  - name: demod
+  - name: decoders
+  - name: tools
+  - name: config
+  - name: survey
+  - name: metadata
+paths:
+  /api/status:
+    get:
+      tags: [radio]
+      operationId: getStatus
+      summary: Radio, demodulator and decoder state
+      responses:
+        "200":
+          description: Current state.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Status"}
+  /api/tune:
+    post:
+      tags: [radio]
+      operationId: tune
+      summary: Set center frequency, sample rate and gain
+      description: |
+        Any subset of fields. Below 24 MHz sdrd switches to direct sampling (HF) automatically.
+        Fails while sdrd plays back a recording unless the values equal the recording's.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TuneRequest"}
+      responses:
+        "200":
+          description: New status.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Status"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+  /api/demod:
+    post:
+      tags: [demod]
+      operationId: setDemod
+      summary: Control the listening demodulator (VFO)
+      description: |
+        Audio is delivered on the /ws/audio WebSocket. A mode other than `off` stops a running `dsd`
+        decoder (dsd owns the audio stream). If `freq_hz` lies outside the middle 80% of
+        the current span, the center is retuned to `freq_hz - sample_rate/4`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DemodRequest"}
+      responses:
+        "200":
+          description: New status; `demod` holds the result.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Status"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+  /api/spectrum:
+    get:
+      tags: [radio]
+      operationId: getSpectrum
+      summary: Aggregated recent spectrum frames in dB
+      parameters:
+        - name: bins
+          in: query
+          schema: {type: integer, minimum: 16, default: 256, description: "Output bins, 16 to fft_size. Max-pooled."}
+        - name: frames
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 40, default: 20, description: "Recent frames to aggregate (20 = 1 s at 20 fps)."}
+        - name: agg
+          in: query
+          schema: {type: string, enum: [avg, max], default: avg}
+      responses:
+        "200":
+          description: Snapshot.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SpectrumSnapshot"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+  /api/peaks:
+    get:
+      tags: [radio]
+      operationId: getPeaks
+      summary: Carriers above the noise floor
+      description: The outer 5% at each edge of the span is ignored. Strongest first.
+      parameters:
+        - name: n
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 10}
+        - name: min_snr
+          in: query
+          schema: {type: number, default: 10, description: "Minimum dB above the median floor."}
+        - name: frames
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 40, default: 20}
+        - name: agg
+          in: query
+          schema: {type: string, enum: [avg, max], default: max}
+      responses:
+        "200":
+          description: Peaks.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Peaks"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+  /api/bands:
+    get:
+      tags: [radio]
+      operationId: getBands
+      summary: Band and antenna catalog
+      description: The embedded data/bands.json, verbatim. Filter by region on the client.
+      responses:
+        "200":
+          description: Catalog.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BandsCatalog"}
+  /api/decoder:
+    post:
+      tags: [decoders]
+      operationId: startDecoder
+      summary: Start a decoder, or stop it with "none"
+      description: |
+        Stops any running decoder first. Returns after about 1.5 s (up to about 8 s for `radiosonde`
+        without `freq_hz`), or earlier when the decoder fails immediately. `dsd` only works on amateur bands.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DecoderStart"}
+      responses:
+        "200":
+          description: New status; `decoder` holds the DecoderStatus.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Status"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/events:
+    get:
+      tags: [decoders]
+      operationId: getEvents
+      summary: Recent decoded events (polling)
+      description: Ring buffer of the last 1000 events. If more than `limit` match, the newest `limit` are returned, oldest first.
+      parameters:
+        - name: since
+          in: query
+          schema: {type: integer, default: 0, description: "Only events with id greater than this. Non-numeric values count as 0."}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 1000, default: 200}
+      responses:
+        "200":
+          description: Events, oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Event"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+  /api/scan:
+    post:
+      tags: [tools]
+      operationId: scan
+      summary: Sweep a frequency range and list carriers
+      description: |
+        Blocks until the scan finishes, about steps * (dwell_ms + 100) ms; one step covers 80% of the
+        sample rate, at most 400 steps. Restores the original center frequency. Note that a busy radio
+        (another scan, recording or survey) and a running decoder are reported with status 400, not 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ScanRequest"}
+      responses:
+        "200":
+          description: Scan result.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ScanResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+  /api/record:
+    post:
+      tags: [tools]
+      operationId: record
+      summary: Record raw cu8 IQ to a file on the server
+      description: |
+        Blocks for the length of the recording. The file (interleaved unsigned 8-bit I/Q) is written to
+        the server's -record-dir; there is no download endpoint. Play back with `sdrd -iq <path>`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RecordRequest"}
+      responses:
+        "200":
+          description: Recording written.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RecordResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/config:
+    get:
+      tags: [config]
+      operationId: getConfig
+      summary: Read the local configuration
+      responses:
+        "200":
+          description: Configuration.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Config"}
+    put:
+      tags: [config]
+      operationId: putConfig
+      summary: Merge changes into the local configuration
+      description: Only fields present in the body change. `null` clears a field. Persisted to the local config file (mode 0600).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ConfigPatch"}
+      responses:
+        "200":
+          description: The full configuration after the change.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Config"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+  /api/survey:
+    post:
+      tags: [survey]
+      operationId: startSurvey
+      summary: Start a "what is on the air?" survey
+      description: Body is optional; an empty body means all defaults. Poll GET /api/survey for progress.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SurveyRequest"}
+      responses:
+        "202":
+          description: Survey accepted and running.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SurveyState"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "409": {$ref: "#/components/responses/Conflict"}
+    get:
+      tags: [survey]
+      operationId: getSurvey
+      summary: Current or last survey state
+      responses:
+        "200":
+          description: Survey state; `state` is `idle` before the first survey.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SurveyState"}
+  /api/survey/stop:
+    post:
+      tags: [survey]
+      operationId: stopSurvey
+      summary: Stop the survey after the current step
+      description: No body. Returns the final state (also 200 when nothing runs). May take up to 20 s.
+      responses:
+        "200":
+          description: Survey state.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SurveyState"}
+  /api/meta:
+    get:
+      tags: [metadata]
+      operationId: getMeta
+      summary: Which metadata datasets are loaded
+      description: Datasets are bulk downloads queried offline (make metadata). Missing data is never an error.
+      responses:
+        "200":
+          description: Dataset status (airlines, faa, satnogs, tle, icao_countries).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MetaStatus"}
+  /api/meta/aircraft/{hex}:
+    get:
+      tags: [metadata]
+      operationId: getMetaAircraft
+      summary: Offline lookup of a Mode S address
+      parameters:
+        - name: hex
+          in: path
+          required: true
+          schema: {type: string, pattern: "^[0-9a-fA-F]{6}$", examples: [a1b2c3]}
+      responses:
+        "200":
+          description: Known fields only; unknown addresses return just `hex`.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AircraftInfo"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+  /api/meta/callsign/{callsign}:
+    get:
+      tags: [metadata]
+      operationId: getMetaCallsign
+      summary: Offline lookup of a callsign
+      parameters:
+        - name: callsign
+          in: path
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 12, examples: [TST123]}
+      responses:
+        "200":
+          description: Airline and flight number, or the registration when the callsign looks like one.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CallsignInfo"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+  /api/satellites/match:
+    get:
+      tags: [metadata]
+      operationId: matchSatellites
+      summary: Satellites with a downlink near a frequency
+      description: Best first - satellites above the horizon first (needs the receiver location), then by frequency distance.
+      parameters:
+        - name: freq_hz
+          in: query
+          required: true
+          schema: {type: number, minimum: 1000000, maximum: 6000000000}
+        - name: tolerance_hz
+          in: query
+          schema: {type: number, minimum: 0, maximum: 1000000, default: 15000, description: "Leave room for Doppler."}
+      responses:
+        "200":
+          description: Candidates, possibly empty.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SatelliteMatch"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+  /api/satellites/passes:
+    get:
+      tags: [metadata]
+      operationId: getSatellitePasses
+      summary: Upcoming satellite passes
+      description: |
+        Satellites with a downlink in 24-1766 MHz and an orbit (TLE). Satellites above the horizon for the
+        whole window (geostationary) are not listed. Needs the receiver location (PUT /api/config).
+      parameters:
+        - name: hours
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 72, default: 24}
+        - name: min_elevation
+          in: query
+          schema: {type: number, minimum: 0, maximum: 90, default: 10, description: "Minimum peak elevation in degrees."}
+      responses:
+        "200":
+          description: Passes.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  passes:
+                    type: array
+                    items: {$ref: "#/components/schemas/SatellitePass"}
+        "400":
+          description: Bad parameter, or the receiver location is not set.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /api/satellites/overhead:
+    get:
+      tags: [metadata]
+      operationId: getSatellitesOverhead
+      summary: Satellites above the horizon now
+      description: Needs the receiver location (PUT /api/config).
+      responses:
+        "200":
+          description: Satellites currently above the horizon.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  satellites:
+                    type: array
+                    items: {$ref: "#/components/schemas/OverheadSatellite"}
+        "400":
+          description: The receiver location is not set.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+components:
+  responses:
+    BadRequest:
+      description: Invalid input, or not possible in the current state.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Conflict:
+      description: The radio is owned by a survey, scan or recording.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    ServerError:
+      description: Server-side failure.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string, description: "Human-readable message."}
+      example: {error: "freq_hz 100 out of range (0.5-24 MHz via direct sampling, 24-1766 MHz via the tuner)"}
+    Status:
+      type: object
+      properties:
+        device: {type: string, description: "Dongle description; empty until connected."}
+        tuner: {type: string, examples: [R820T]}
+        gains_db:
+          type: array
+          items: {type: number}
+          description: Supported tuner gain steps.
+        center_hz: {type: integer}
+        sample_rate: {type: integer}
+        gain_db: {type: [number, "null"], description: "null = automatic gain."}
+        fft_size: {type: integer, description: "Bins per spectrum frame."}
+        fps: {type: integer, description: "Spectrum frames per second."}
+        mode: {type: string, description: "Always `spectrum` today."}
+        direct_sampling: {type: boolean, description: "True below 24 MHz (HF)."}
+        demod: {$ref: "#/components/schemas/DemodStatus"}
+        decoder: {$ref: "#/components/schemas/DecoderStatus"}
+        connected: {type: boolean}
+        error: {type: string, description: "Present only when the last connection attempt failed."}
+      example:
+        device: "Example Vendor, Example SDR v1, SN: 00000001"
+        tuner: R820T
+        gains_db: [0.0, 0.9, 1.4]
+        center_hz: 433920000
+        sample_rate: 2048000
+        gain_db: 29.7
+        fft_size: 2048
+        fps: 20
+        mode: spectrum
+        direct_sampling: false
+        demod: {mode: "off", freq_hz: 0, bandwidth_hz: 0, squelch_db: null, audio_rate: 0, level_db: 0}
+        decoder: {name: none, running: false, events: 0, last_event_ts: 0}
+        connected: true
+    TuneRequest:
+      type: object
+      description: Any subset. Absent fields are unchanged.
+      properties:
+        freq_hz: {type: integer, minimum: 500000, maximum: 1766000000}
+        sample_rate:
+          type: integer
+          description: "225001-300000 or 900001-3200000 samples per second (2.4 MS/s is the reliable maximum)."
+          minimum: 225001
+          maximum: 3200000
+        gain_db:
+          type: [number, "null"]
+          description: Snapped to the nearest tuner gain step. `null` selects automatic gain; absent leaves the gain unchanged.
+      example: {freq_hz: 433920000, sample_rate: 2048000, gain_db: 29.7}
+    DemodRequest:
+      type: object
+      description: Any subset. Absent fields are unchanged.
+      properties:
+        mode: {type: string, enum: ["off", nfm, am, usb, lsb]}
+        freq_hz:
+          type: integer
+          description: "Frequency to listen to (usb/lsb: suppressed-carrier dial frequency)."
+        bandwidth_hz:
+          type: number
+          minimum: 500
+          maximum: 200000
+          description: "Default when the mode changes: nfm 12500, am 10000, usb/lsb 2800."
+        squelch_db:
+          type: [number, "null"]
+          description: Channel power below this mutes audio. `null` disables squelch; absent leaves it unchanged.
+      example: {mode: nfm, freq_hz: 446006250, bandwidth_hz: 12500, squelch_db: -60}
+    DemodStatus:
+      type: object
+      properties:
+        mode: {type: string, enum: ["off", nfm, am, usb, lsb]}
+        freq_hz: {type: integer}
+        bandwidth_hz: {type: number}
+        squelch_db: {type: [number, "null"]}
+        audio_rate: {type: integer, description: "Sample rate of /ws/audio PCM; 0 while off."}
+        level_db: {type: number, description: "Current channel power."}
+    DecoderStart:
+      type: object
+      required: [decoder]
+      properties:
+        decoder:
+          type: string
+          enum: [rtl_433, meters, adsb, uat, aprs, ais, packet, radiosonde, dsd, none]
+          description: "`none` (or an empty string) stops the running decoder."
+        region: {type: string, enum: [us, eu], description: "aprs only: 144.39 MHz (us) or 144.8 MHz (eu)."}
+        freq_hz: {type: integer, description: "packet, dsd, radiosonde. Default: the VFO frequency (radiosonde: search 400-406 MHz). dsd accepts amateur bands only."}
+        baud: {type: integer, enum: [1200, 9600], default: 1200, description: "packet only."}
+      example: {decoder: packet, freq_hz: 437800000, baud: 9600}
+    DecoderStatus:
+      type: object
+      properties:
+        name: {type: string, description: "Decoder name, or `none` when idle."}
+        running: {type: boolean}
+        freq_hz: {type: integer, description: "Present when the decoder has a fixed frequency."}
+        started: {type: integer, description: "Unix seconds."}
+        events: {type: integer, description: "Events published by this run."}
+        last_event_ts: {type: number, description: "Unix seconds of the latest event of this run, 0 if none."}
+        error: {type: string, description: "Present when the last run ended with an error."}
+      example: {name: rtl_433, running: true, freq_hz: 433920000, started: 1795286400, events: 12, last_event_ts: 1795286410.5}
+    Event:
+      type: object
+      required: [id, ts, decoder, kind, data]
+      properties:
+        id: {type: integer, description: "Increasing, starting at 1 per sdrd process."}
+        ts: {type: number, description: "Unix seconds."}
+        decoder:
+          type: string
+          description: A decoder name, or `survey` for survey progress lines.
+        kind:
+          type: string
+          enum: [message, snapshot, log]
+        data:
+          type: object
+          additionalProperties: true
+          description: |
+            Shape depends on decoder and kind (see docs/api.md, "Event shapes").
+            - any, `log`: `{line}`.
+            - rtl_433, `message`: rtl_433's JSON as is (model, id, channel, temperature_C, humidity, rssi, ...).
+            - adsb / uat, `snapshot` (1/s): `{aircraft: [{hex, flight?, alt_baro?, gs?, track?, lat?, lon?, squawk?, seen, messages, country?, registration?, type?, year?, airline?: {icao, name, radio}, flight_number?}]}`; uat adds vert_rate, addrtype when present. country..flight_number come from offline metadata.
+            - uat, `message`: FIS-B text `{kind: "fisb", product, report_type, location, time, text}`.
+            - aprs / packet, `message`: `{raw, from, to, path[], info, lat?, lon?, comment?}`; packet adds `satellite?: {norad, name}` when a matching satellite is above the horizon.
+            - ais, `message`: `{nmea, type, mmsi, lat?, lon?, sog?, cog?, heading?, name?, callsign?, shiptype?}`.
+            - meters, `message`: rtl_433 JSON for your own meters only; `snapshot` (every 5 s): `{own_ids, other_meters_heard}`.
+            - radiosonde, `message`: rs1729 JSON plus freq_hz (type, id, frame, datetime, lat, lon, alt, vel_h, heading, vel_v, sats, temp?, humidity?, pressure?, batt?).
+            - dsd, `message`: `{line, mode?, tgt?, src?, color_code?, encrypted?}`. Encrypted traffic is never decrypted.
+      example:
+        id: 17
+        ts: 1795286400.12
+        decoder: rtl_433
+        kind: message
+        data: {model: Example-Sensor, id: 123, channel: 1, temperature_C: 21.5, humidity: 40}
+    SpectrumSnapshot:
+      type: object
+      properties:
+        center_hz: {type: integer}
+        sample_rate: {type: integer}
+        start_hz: {type: number, description: "Center frequency of db[0]; db[i] is centered on start_hz + i * bin_hz."}
+        bin_hz: {type: number}
+        frames: {type: integer, description: "Frames actually aggregated."}
+        agg: {type: string, enum: [avg, max]}
+        floor_db: {type: number, description: "Median noise floor."}
+        db:
+          type: array
+          items: {type: number}
+      example:
+        center_hz: 452500000
+        sample_rate: 2048000
+        start_hz: 451539500
+        bin_hz: 128000
+        frames: 20
+        agg: avg
+        floor_db: -73.3
+        db: [-74.6, -73.0, -72.4]
+    Peak:
+      type: object
+      properties:
+        freq_hz: {type: number}
+        db: {type: number}
+        snr_db: {type: number, description: "dB above the median floor."}
+        spur:
+          type: boolean
+          description: Within 2 bins of a multiple of 28.8 MHz (RTL2832U crystal). Omitted when false.
+        label:
+          type: string
+          description: Known catalog channel within 5 kHz, or a currently visible satellite downlink. Omitted when unknown.
+    Peaks:
+      type: object
+      properties:
+        center_hz: {type: integer}
+        sample_rate: {type: integer}
+        frames: {type: integer}
+        agg: {type: string, enum: [avg, max]}
+        floor_db: {type: number}
+        peaks:
+          type: array
+          items: {$ref: "#/components/schemas/Peak"}
+      example:
+        center_hz: 452500000
+        sample_rate: 2048000
+        frames: 20
+        agg: max
+        floor_db: -72.2
+        peaks: [{freq_hz: 452738000, db: -43.1, snr_db: 29.1}]
+    BandsCatalog:
+      type: object
+      properties:
+        version: {type: integer}
+        default_region: {type: string}
+        regions:
+          type: object
+          additionalProperties: {type: string}
+          description: Region id to name.
+        fields:
+          type: object
+          additionalProperties: {type: string}
+          description: Informational field documentation.
+        bands:
+          type: array
+          items: {$ref: "#/components/schemas/Band"}
+        antennas:
+          type: array
+          items: {$ref: "#/components/schemas/Antenna"}
+    Band:
+      type: object
+      properties:
+        id: {type: string}
+        name: {type: string}
+        regions: {type: array, items: {type: string}}
+        lo_mhz: {type: number}
+        hi_mhz: {type: number}
+        edges:
+          type: object
+          additionalProperties:
+            type: array
+            items: {type: number}
+            minItems: 2
+            maxItems: 2
+          description: Region id to [lo, hi] MHz; overrides lo_mhz/hi_mhz for that region.
+        tune_mhz: {type: number}
+        hf: {type: boolean, description: "Needs HF direct sampling."}
+        mode: {type: string, enum: [nfm, am, usb, lsb, none]}
+        decoder:
+          type: [string, "null"]
+          description: "rtl_433, meters, adsb, uat, aprs, ais, packet, radiosonde, dsd or null."
+        on_air: {type: string}
+        decode_with: {type: array, items: {type: string}}
+        antenna: {type: string}
+        tx_license: {type: string}
+        starter: {type: string}
+        channels:
+          type: array
+          items:
+            type: object
+            properties:
+              mhz: {type: number}
+              name: {type: string}
+              mode: {type: string}
+              regions: {type: array, items: {type: string}, description: "Absent = every region of the band."}
+              decoder: {type: string}
+    Antenna:
+      type: object
+      properties:
+        id: {type: string}
+        name: {type: string}
+        good:
+          type: array
+          items: {type: array, items: {type: number}, minItems: 2, maxItems: 2}
+          description: MHz ranges that fit well.
+        fair:
+          type: array
+          items: {type: array, items: {type: number}, minItems: 2, maxItems: 2}
+          description: MHz ranges that fit acceptably. Anything else is poor.
+    ScanRequest:
+      type: object
+      required: [start_hz, stop_hz]
+      properties:
+        start_hz: {type: integer}
+        stop_hz: {type: integer, description: "Must be above start_hz."}
+        dwell_ms: {type: integer, minimum: 100, maximum: 5000, default: 500}
+        min_snr: {type: number, default: 10}
+        max: {type: integer, default: 50, description: "Maximum peaks returned."}
+      example: {start_hz: 430000000, stop_hz: 440000000, dwell_ms: 500, min_snr: 10, max: 50}
+    ScanResult:
+      type: object
+      properties:
+        start_hz: {type: integer}
+        stop_hz: {type: integer}
+        duration_s: {type: number}
+        steps:
+          type: array
+          items:
+            type: object
+            properties:
+              center_hz: {type: integer}
+              floor_db: {type: number}
+        peaks:
+          type: array
+          items: {$ref: "#/components/schemas/Peak"}
+      example:
+        start_hz: 430000000
+        stop_hz: 440000000
+        duration_s: 7.2
+        steps: [{center_hz: 430819200, floor_db: -72.1}]
+        peaks: [{freq_hz: 433920000, db: -40.2, snr_db: 31.0}]
+    RecordRequest:
+      type: object
+      required: [seconds]
+      properties:
+        seconds: {type: number, minimum: 0.1, maximum: 60}
+      example: {seconds: 5}
+    RecordResult:
+      type: object
+      properties:
+        path: {type: string, description: "Absolute path on the server."}
+        bytes: {type: integer}
+        seconds: {type: number}
+        center_hz: {type: integer}
+        sample_rate: {type: integer}
+      example:
+        path: /abs/path/recordings/20261121-130038_433920000Hz_2048000sps.cu8
+        bytes: 20480000
+        seconds: 5
+        center_hz: 433920000
+        sample_rate: 2048000
+    Receiver:
+      type: object
+      required: [lat, lon]
+      properties:
+        lat: {type: number, minimum: -90, maximum: 90}
+        lon: {type: number, minimum: -180, maximum: 180}
+        alt_m: {type: [number, "null"], description: "Altitude in meters. Optional."}
+    Config:
+      type: object
+      properties:
+        receiver:
+          oneOf:
+            - {$ref: "#/components/schemas/Receiver"}
+            - {type: "null"}
+          description: null until set.
+        meter_ids:
+          type: array
+          items: {type: string}
+          description: Utility meters you own. Omitted when empty.
+        antenna: {type: string, description: "Antenna id from the catalog. Omitted when unknown."}
+      example: {receiver: {lat: 12.34, lon: 56.78, alt_m: 100}, meter_ids: ["12345678"], antenna: jpole}
+    ConfigPatch:
+      type: object
+      description: Only fields present are changed.
+      properties:
+        receiver:
+          oneOf:
+            - {$ref: "#/components/schemas/Receiver"}
+            - {type: "null"}
+        meter_ids:
+          type: [array, "null"]
+          items: {type: string}
+        antenna:
+          type: [string, "null"]
+          description: Must be an antenna id from /api/bands.
+      example: {receiver: {lat: 12.34, lon: 56.78}, meter_ids: ["12345678"]}
+    SurveyRequest:
+      type: object
+      properties:
+        antenna: {type: string, description: "Default: the configured antenna, else `none`."}
+        region: {type: string, description: "Default: the catalog default region."}
+        seconds: {type: integer, minimum: 5, maximum: 120, default: 20, description: "Listening time per decoder step."}
+        include_fair: {type: boolean, default: false}
+        listen:
+          type: boolean
+          default: true
+          description: After the scan of each voice band (nfm/am/usb/lsb), play the strongest non-spur carrier for `listen_seconds` on /ws/audio. The VFO is off during the survey except during holds.
+        listen_seconds: {type: integer, minimum: 2, maximum: 30, default: 8, description: "Hold per voice band. Other values give 400."}
+        steps:
+          type: array
+          items: {type: string}
+          description: "Explicit step ids such as `scan:2m`, `aprs`, `rtl_433@ism433`. Absent = built plan."
+      example: {antenna: jpole, region: us, seconds: 20, steps: [aprs, "scan:2m"]}
+    SurveyState:
+      type: object
+      properties:
+        id: {type: integer, description: "0 before the first survey."}
+        state: {type: string, enum: [idle, running, done, stopped, error]}
+        antenna: {type: string}
+        region: {type: string}
+        started: {type: number, description: "Unix seconds."}
+        elapsed_s: {type: number}
+        estimated_s: {type: integer, description: "Includes listen_seconds per voice-band scan step when listen is on."}
+        listen: {type: boolean, description: "Echo of the request."}
+        listen_seconds: {type: integer, description: "Echo of the request; omitted when 0."}
+        listening:
+          type: object
+          description: Present only during a listen hold.
+          properties:
+            step: {type: string}
+            freq_hz: {type: integer}
+            mode: {type: string, enum: [nfm, am, usb, lsb]}
+            label: {type: string}
+            seconds: {type: integer, description: "Planned hold."}
+            started: {type: number, description: "Unix seconds."}
+        error: {type: string}
+        steps:
+          type: array
+          items: {$ref: "#/components/schemas/SurveyStep"}
+    SurveyStep:
+      type: object
+      properties:
+        id: {type: string, description: "`scan:<band>`, `<decoder>` or `<decoder>@<band>`."}
+        kind: {type: string, enum: [scan, decoder]}
+        decoder: {type: string}
+        band: {type: string}
+        label: {type: string}
+        freq_lo_hz: {type: integer, description: "scan steps."}
+        freq_hi_hz: {type: integer, description: "scan steps."}
+        freq_hz: {type: integer, description: "decoder steps."}
+        state: {type: string, enum: [pending, running, done, skipped, error]}
+        seconds: {type: number}
+        found: {type: integer, description: "Distinct things heard."}
+        summary: {type: string}
+        peaks:
+          type: array
+          description: Scan steps only; crystal spurs are left out.
+          items:
+            type: object
+            properties:
+              freq_hz: {type: number}
+              db: {type: number}
+              snr_db: {type: number}
+              label: {type: string, description: "Catalog channel or visible satellite, when known."}
+        listened:
+          type: object
+          description: Scan steps on voice bands, after a listen hold. The step's `seconds` excludes the hold.
+          properties:
+            freq_hz: {type: integer, description: "Rounded to the channel grid (usb/lsb 100 Hz; nfm/am 1 kHz below 30 MHz, else 5 or 6.25 kHz)."}
+            mode: {type: string, enum: [nfm, am, usb, lsb]}
+            seconds: {type: number, description: "Actual hold."}
+            level_db: {type: number, description: "Mean demodulator channel level over the hold."}
+            label: {type: string}
+        samples:
+          type: array
+          description: Up to 3 representative event `data` objects. For `meters`, own meters only.
+          items: {type: object, additionalProperties: true}
+        error: {type: string, description: "When state is error."}
+        reason: {type: string, description: "When state is skipped."}
+    MetaStatus:
+      type: object
+      properties:
+        db_dir: {type: string, description: "Local dataset directory (sdrd -db-dir)."}
+        datasets:
+          type: array
+          items:
+            type: object
+            properties:
+              name: {type: string, enum: [airlines, faa, satnogs, tle, icao_countries]}
+              loaded: {type: boolean}
+              records: {type: integer}
+              fetched: {type: string, description: "RFC 3339 download time. Omitted when unknown."}
+              license: {type: string}
+              attribution: {type: string}
+              error: {type: string, description: "For example `loading` or `not downloaded: run make metadata`."}
+      example:
+        db_dir: /home/user/.local/share/sweep/db
+        datasets:
+          - {name: airlines, loaded: true, records: 6000, fetched: "2026-11-21T20:00:00Z", license: "ODbL 1.0", attribution: OpenFlights}
+          - {name: faa, loaded: false, records: 0, license: "US public domain", attribution: "FAA aircraft registry", error: "not downloaded: run make metadata"}
+    Airline:
+      type: object
+      properties:
+        icao: {type: string}
+        name: {type: string}
+        radio: {type: string, description: "Radio callsign."}
+        country: {type: string, description: "Only in /api/meta/callsign responses."}
+    AircraftInfo:
+      type: object
+      required: [hex]
+      properties:
+        hex: {type: string}
+        country: {type: string}
+        registration: {type: string}
+        type: {type: string}
+        year: {type: integer}
+      example: {hex: a1b2c3, country: United States, registration: N123AB, type: EXAMPLE 737-800, year: 2015}
+    CallsignInfo:
+      type: object
+      required: [callsign]
+      properties:
+        callsign: {type: string}
+        registration: {type: string, description: "Set when the callsign looks like a registration."}
+        airline: {$ref: "#/components/schemas/Airline"}
+        flight_number: {type: string}
+      example: {callsign: TST123, airline: {icao: TST, name: Example Airways, radio: EXAMPLE, country: Exampleland}, flight_number: "123"}
+    SatelliteDownlink:
+      type: object
+      properties:
+        freq_hz: {type: integer}
+        mode: {type: string}
+        baud: {type: integer}
+        decoder:
+          type: [string, "null"]
+          description: "`packet` for AX.25 1200/9600, `nfm` for FM voice, else null."
+        doppler_hz: {type: integer, description: "Current Doppler shift; overhead only."}
+    SatelliteCandidate:
+      type: object
+      properties:
+        norad: {type: integer}
+        name: {type: string}
+        downlink_hz: {type: integer}
+        mode: {type: string}
+        baud: {type: integer}
+        transmitter: {type: string}
+        visible: {type: boolean, description: "False when below the horizon or without an orbit (no TLE)."}
+        elevation_deg: {type: number}
+        azimuth_deg: {type: number}
+        range_km: {type: integer}
+        doppler_hz: {type: integer}
+    SatelliteMatch:
+      type: object
+      properties:
+        freq_hz: {type: integer}
+        receiver_set: {type: boolean}
+        candidates:
+          type: array
+          items: {$ref: "#/components/schemas/SatelliteCandidate"}
+      example:
+        freq_hz: 436500000
+        receiver_set: true
+        candidates: [{norad: 12345, name: EXAMPLESAT-1, downlink_hz: 436500000, mode: FM, baud: 9600, transmitter: Telemetry, visible: true, elevation_deg: 34.2, azimuth_deg: 210.5, range_km: 1020, doppler_hz: -4300}]
+    SatellitePass:
+      type: object
+      properties:
+        norad: {type: integer}
+        name: {type: string}
+        aos: {type: integer, description: "Unix seconds, acquisition of signal."}
+        los: {type: integer, description: "Unix seconds, loss of signal."}
+        max_elevation_deg: {type: number}
+        max_time: {type: integer, description: "Unix seconds of maximum elevation."}
+        downlinks:
+          type: array
+          items: {$ref: "#/components/schemas/SatelliteDownlink"}
+    OverheadSatellite:
+      type: object
+      properties:
+        norad: {type: integer}
+        name: {type: string}
+        visible: {type: boolean}
+        elevation_deg: {type: number}
+        azimuth_deg: {type: number}
+        range_km: {type: integer}
+        downlinks:
+          type: array
+          items: {$ref: "#/components/schemas/SatelliteDownlink"}
+x-websockets:
+  /ws/spectrum:
+    summary: Live spectrum frames (server to client).
+    description: |
+      Text frame on connect and whenever tuning or scaling changes:
+      `{"type":"meta","center_hz":433920000,"sample_rate":2048000,"bins":2048,"min_db":-90,"max_db":-20,"fps":20}`.
+      Then binary frames of exactly `bins` bytes (uint8), about `fps` per second. Bin i is centered at
+      center_hz - sample_rate/2 + i*sample_rate/bins; value v maps to dB = min_db + v*(max_db-min_db)/255.
+      The DC bin is masked. Drop binary frames until a meta frame has arrived.
+    messages:
+      - {direction: server-to-client, type: text, schema: "{type: meta, center_hz, sample_rate, bins, min_db, max_db, fps}"}
+      - {direction: server-to-client, type: binary, schema: "bins x uint8"}
+  /ws/audio:
+    summary: Listening audio and squelch level (server to client).
+    description: |
+      Text frames: `{"type":"audio","rate":32000,"mode":"nfm"}` on connect and when rate or mode change
+      (`{"type":"audio","rate":0,"mode":"off"}` when idle; `mode":"dsd","rate":8000` while the dsd decoder runs),
+      and `{"type":"level","db":-71.3,"open":true}` about 10 times per second. Binary frames: mono signed
+      16-bit little-endian PCM at `rate`, about 20 ms each; none while the mode is off.
+    messages:
+      - {direction: server-to-client, type: text, schema: "{type: audio, rate, mode} | {type: level, db, open}"}
+      - {direction: server-to-client, type: binary, schema: "int16 little-endian mono PCM"}
+  /ws/events:
+    summary: Live decoder events (server to client).
+    description: |
+      One JSON text frame per Event (see components/schemas/Event). The last 100 events are replayed on
+      connect, then new events follow. Slow clients may miss events; use `id` to detect gaps.
+    messages:
+      - {direction: server-to-client, type: text, schema: "#/components/schemas/Event"}

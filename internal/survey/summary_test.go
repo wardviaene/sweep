@@ -96,3 +96,10 @@ func TestScanResult(t *testing.T) {
 		t.Fatal("spur kept")
 	}
 }
+
+func TestScanResultKeepsLabels(t *testing.T) {
+	_, _, peaks := scanResult([]dsp.Peak{{FreqHz: 162.4e6, DB: -40, SNR: 30, Label: "NOAA Weather Radio: WX2"}})
+	if peaks[0].Label != "NOAA Weather Radio: WX2" {
+		t.Fatalf("%+v", peaks)
+	}
+}

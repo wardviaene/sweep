@@ -194,6 +194,7 @@ export function App() {
             surveyLine={surveyLine}
             onOpenSurvey={() => setSurveyOpen(true)}
             focus={decFocus}
+            onListen={(hz) => surveyListen(hz, "nfm")}
           />
         </div>
       </div>
@@ -206,6 +207,8 @@ export function App() {
         onSummary={setSurveyLine}
         onOpenDecoder={openSurveyDecoder}
         onListen={surveyListen}
+        audioOn={audio.on}
+        onAudioToggle={audio.toggle}
         onTune={tuner.setFreq}
       />
     </div>

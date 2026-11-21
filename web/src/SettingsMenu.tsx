@@ -3,6 +3,7 @@ import type { ConfigApi } from "./useConfig";
 import type { LatLon } from "./geo";
 import { Popover } from "./Popover";
 import type { Antenna } from "./bands";
+import { getMeta, type MetaDataset } from "./api";
 
 const parse = (s: string): number | null => (s.trim() === "" || !Number.isFinite(Number(s)) ? null : Number(s));
 
@@ -23,6 +24,15 @@ export function SettingsMenu(props: {
   const [ids, setIds] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [datasets, setDatasets] = useState<MetaDataset[] | null>(null);
+
+  // Datasets are read when the panel opens (cheap, local).
+  useEffect(() => {
+    if (!open) return;
+    const ac = new AbortController();
+    getMeta(ac.signal).then(setDatasets).catch(() => undefined);
+    return () => ac.abort();
+  }, [open]);
 
   useEffect(() => {
     setLat(receiver ? String(receiver.lat) : "");
@@ -146,6 +156,28 @@ export function SettingsMenu(props: {
         <button disabled={busy || idsBad || !config.available} onClick={() => void run(idList, "meter IDs saved")}>Save IDs</button>
       </div>
       <div className="dim pad0">The ID is printed on your meter; meters you don't own are never shown.</div>
+      <hr />
+      <div className="label">datasets</div>
+      {datasets === null && <div className="dim pad0">metadata API not available on this backend</div>}
+      {datasets?.map((d) => (
+        <div key={d.name} className="pad0" title={d.error}>
+          <span className={d.loaded ? "conn-open" : "dim"}>{d.loaded ? "●" : "○"}</span> <b>{d.name}</b>{" "}
+          {d.loaded ? (
+            <span className="dim">
+              {d.records.toLocaleString()} records
+              {d.fetched ? ` · fetched ${d.fetched.slice(0, 10)}` : ""}
+              {d.license || d.attribution ? ` · ${[d.attribution, d.license].filter(Boolean).join(", ")}` : ""}
+            </span>
+          ) : (
+            <span className="dim">not loaded{d.error ? ` (${d.error})` : ""}</span>
+          )}
+        </div>
+      ))}
+      {datasets !== null && datasets.some((d) => !d.loaded) && (
+        <div className="dim pad0">
+          Run <code>make metadata</code> to download airline, aircraft and satellite data (bulk, offline lookups; nothing is looked up per aircraft or satellite).
+        </div>
+      )}
     </Popover>
   );
 }

@@ -107,7 +107,9 @@ func (m *Manager) pollUATAircraft(ctx context.Context, path string) {
 		}
 		out := []map[string]any{}
 		for _, a := range doc.Aircraft {
-			out = append(out, normUATAircraft(a))
+			n := normUATAircraft(a)
+			m.enrichAircraftMap(n)
+			out = append(out, n)
 		}
 		m.ev.Publish("uat", "snapshot", map[string]any{"aircraft": out})
 	}

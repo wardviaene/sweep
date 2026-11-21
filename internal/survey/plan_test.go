@@ -119,7 +119,7 @@ func TestEstimate(t *testing.T) {
 		{Kind: "decoder", secs: 20},                                // 23
 		{Kind: "decoder", secs: 20, State: "skipped", Reason: "x"}, // 0
 	}
-	if got := estimate(steps, 2_048_000); got != 26 { // 3*0.6+1 = 2.8, +23 = 25.8 rounded up
+	if got := estimate(steps, 2_048_000, 0); got != 26 { // 3*0.6+1 = 2.8, +23 = 25.8 rounded up
 		t.Fatalf("estimate %d", got)
 	}
 }

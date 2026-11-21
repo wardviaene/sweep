@@ -19,6 +19,8 @@ export interface AprsPacket {
   info: string;
   lat: number | null;
   lon: number | null;
+  /** satellite above the horizon with a matching downlink (packet events), "" if none */
+  satellite: string;
 }
 export interface AprsView {
   stations: AprsStation[];
@@ -45,6 +47,7 @@ function apply(m: Model, e: DecEvent): boolean {
     id: e.id, ts: e.ts, from, to: s(d.to),
     path: Array.isArray(d.path) ? (d.path as unknown[]).join(",") : "",
     info: s(d.comment) || s(d.info), lat, lon,
+    satellite: d.satellite && typeof d.satellite === "object" ? s((d.satellite as Record<string, unknown>).name) : "",
   });
   if (m.pk.length > MAX_PACKETS) m.pk.shift();
   let st = m.st.get(from);

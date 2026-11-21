@@ -15,8 +15,12 @@
 //	sdrctl scan 430M 440M [-dwell 500] [-min-snr 10]
 //	sdrctl record <seconds>
 //	sdrctl antenna [id|clear]
-//	sdrctl survey [-seconds 20] [-include-fair] [-region us] [-antenna id] [step ...]
+//	sdrctl survey [-seconds 20] [-include-fair] [-region us] [-antenna id] [-listen=true] [-listen-seconds 8] [step ...]
 //	sdrctl survey status|stop
+//	sdrctl meta [aircraft <hex>|callsign <callsign>]
+//	sdrctl sats passes [-hours 24] [-min-el 10]
+//	sdrctl sats overhead
+//	sdrctl sats match <freq> [-tol 15k]
 package main
 
 import (
@@ -204,20 +208,78 @@ func init() {
 		}
 		return usageErr("antenna")
 	}}
-	commands["survey"] = command{"survey [-seconds 20] [-include-fair] [-region us] [-antenna id] [step ...] | survey status | survey stop", cmdSurvey}
+	commands["survey"] = command{"survey [-seconds 20] [-include-fair] [-region us] [-antenna id] [-listen=true] [-listen-seconds 8] [step ...] | survey status | survey stop", cmdSurvey}
 }
 
 // surveyState is the part of GET /api/survey the progress lines need.
 type surveyState struct {
 	State string `json:"state"`
 	Steps []struct {
-		ID      string  `json:"id"`
-		State   string  `json:"state"`
-		Seconds float64 `json:"seconds"`
-		Summary string  `json:"summary"`
-		Error   string  `json:"error"`
-		Reason  string  `json:"reason"`
+		ID       string  `json:"id"`
+		State    string  `json:"state"`
+		Seconds  float64 `json:"seconds"`
+		Summary  string  `json:"summary"`
+		Error    string  `json:"error"`
+		Reason   string  `json:"reason"`
+		Listened *struct {
+			FreqHz  uint32  `json:"freq_hz"`
+			Mode    string  `json:"mode"`
+			Seconds float64 `json:"seconds"`
+			LevelDB float64 `json:"level_db"`
+		} `json:"listened"`
 	} `json:"steps"`
+}
+
+func init() {
+	commands["meta"] = command{"meta [aircraft <hex>|callsign <callsign>]   (loaded datasets, or look one up offline)", func(a []string) error {
+		switch {
+		case len(a) == 0:
+			return get("/api/meta", nil)
+		case len(a) == 2 && a[0] == "aircraft":
+			return get("/api/meta/aircraft/"+url.PathEscape(a[1]), nil)
+		case len(a) == 2 && a[0] == "callsign":
+			return get("/api/meta/callsign/"+url.PathEscape(a[1]), nil)
+		}
+		return usageErr("meta")
+	}}
+	commands["sats"] = command{"sats passes [-hours 24] [-min-el 10] | overhead | match <freq> [-tol 15k]", cmdSats}
+}
+
+func cmdSats(a []string) error {
+	if len(a) == 0 {
+		return usageErr("sats")
+	}
+	switch a[0] {
+	case "passes":
+		fs := flag.NewFlagSet("sats passes", flag.ContinueOnError)
+		hours := fs.Int("hours", 24, "look-ahead window")
+		minEl := fs.Float64("min-el", 10, "minimum peak elevation in degrees")
+		if err := fs.Parse(a[1:]); err != nil {
+			return err
+		}
+		return get("/api/satellites/passes", url.Values{"hours": {strconv.Itoa(*hours)}, "min_elevation": {fmt.Sprint(*minEl)}})
+	case "overhead":
+		return get("/api/satellites/overhead", nil)
+	case "match":
+		if len(a) < 2 || strings.HasPrefix(a[1], "-") {
+			return usageErr("sats")
+		}
+		f, err := ParseFreq(a[1])
+		if err != nil {
+			return err
+		}
+		fs := flag.NewFlagSet("sats match", flag.ContinueOnError)
+		tol := fs.String("tol", "15k", "frequency tolerance (leave room for Doppler)")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		t, err := ParseFreq(*tol)
+		if err != nil {
+			return err
+		}
+		return get("/api/satellites/match", url.Values{"freq_hz": {strconv.FormatUint(f, 10)}, "tolerance_hz": {strconv.FormatUint(t, 10)}})
+	}
+	return usageErr("sats")
 }
 
 func cmdSurvey(a []string) error {
@@ -232,10 +294,12 @@ func cmdSurvey(a []string) error {
 	fair := fs.Bool("include-fair", false, "also survey bands the antenna only fairly covers")
 	region := fs.String("region", "", "us or eu (default: the catalog default)")
 	antenna := fs.String("antenna", "", "antenna id (default: the configured antenna)")
+	listen := fs.Bool("listen", true, "play the strongest carrier of each voice band after its scan (turn audio on in the UI to hear it)")
+	listenSeconds := fs.Int("listen-seconds", 8, "listen time per voice band (2-30)")
 	if err := fs.Parse(a); err != nil {
 		return err
 	}
-	body := map[string]any{"seconds": *seconds, "include_fair": *fair}
+	body := map[string]any{"seconds": *seconds, "include_fair": *fair, "listen": *listen, "listen_seconds": *listenSeconds}
 	if *region != "" {
 		body["region"] = *region
 	}
@@ -272,7 +336,11 @@ func cmdSurvey(a []string) error {
 				continue
 			}
 			seen[s.ID] = s.State
-			fmt.Fprintf(os.Stderr, "%-14s %-8s %s\n", s.ID, s.State, cmp(s.Summary, s.Error, s.Reason))
+			line := cmp(s.Summary, s.Error, s.Reason)
+			if l := s.Listened; l != nil {
+				line += fmt.Sprintf("; listened %.0f s to %.3f MHz %s (%.0f dB)", l.Seconds, float64(l.FreqHz)/1e6, strings.ToUpper(l.Mode), l.LevelDB)
+			}
+			fmt.Fprintf(os.Stderr, "%-14s %-8s %s\n", s.ID, s.State, line)
 		}
 		if st.State != "running" {
 			var buf bytes.Buffer

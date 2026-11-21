@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Receiver } from "./api";
 import { bearingDeg, rangeNmi, NMI_M } from "./geo";
 import type { Aircraft, AircraftView as View } from "./useAircraft";
+import { DataSources, flag, shortType } from "./meta";
 import { esc, L, MapBox, SortTable, useFit, type Col, type RegisterCenter } from "./mapkit";
 
 const RINGS = [25, 50, 100, 200];
@@ -24,13 +25,24 @@ export function altColor(alt: number | "ground" | null): string {
 const fl = (alt: number | "ground" | null) =>
   alt === "ground" ? "GND" : alt === null ? "" : `FL${String(Math.round(alt / 100)).padStart(3, "0")}`;
 const link = (hex: string) => `https://globe.adsbexchange.com/?icao=${encodeURIComponent(hex)}`;
-const name = (a: Aircraft) => a.flight || a.hex.toUpperCase();
+const name = (a: Aircraft) => a.flight || a.registration || a.hex.toUpperCase();
+/** "UAL123 · 738 · FL350" */
+const mapLabel = (a: Aircraft) => [name(a), shortType(a.type), fl(a.alt)].filter(Boolean).join(" · ");
+const COLS_KEY = "sweep.acMetaCols";
+const loadCols = (): boolean => {
+  try {
+    return localStorage.getItem(COLS_KEY) !== "0";
+  } catch {
+    return true;
+  }
+};
+const dash = <span className="dim">-</span>;
 
 const PLANE = "M12 1.5l1.9 7.2 8.1 5v2.3l-8.1-2.4-.9 5 2.8 2v1.4L12 21.5l-3.8 1.5v-1.4l2.8-2-.9-5-8.1 2.4v-2.3l8.1-5z";
 function icon(a: Aircraft, on: boolean): L.DivIcon {
   const size = on ? 30 : 22;
   const col = altColor(a.alt);
-  const label = `${esc(name(a))} ${fl(a.alt)}`.trim();
+  const label = esc(mapLabel(a));
   return L.divIcon({
     className: `ac${on ? " on" : ""}`,
     iconSize: [size, size],
@@ -45,6 +57,8 @@ function icon(a: Aircraft, on: boolean): L.DivIcon {
 function popup(a: Aircraft): string {
   return (
     `<b>${esc(name(a))}</b> ${esc(a.hex)}<br>` +
+    (a.airline ? `${esc(a.airline)}<br>` : "") +
+    (a.type ? `${esc(a.type)}${a.registration ? " · " + esc(a.registration) : ""}<br>` : "") +
     `${fl(a.alt)} ${a.gs !== null ? Math.round(a.gs) + " kt" : ""}<br>` +
     `<a href="${link(a.hex)}" target="_blank" rel="noopener noreferrer">ADS-B Exchange ↗</a>`
   );
@@ -76,6 +90,16 @@ export function AircraftView(props: {
   const layers = useRef<Layers | null>(null);
   const byHex = useRef(new Map<string, Aircraft>());
   const hl = hover ?? selected;
+  const [metaCols, setMetaCols] = useState(loadCols);
+  const toggleCols = () => {
+    const v = !metaCols;
+    setMetaCols(v);
+    try {
+      localStorage.setItem(COLS_KEY, v ? "1" : "0");
+    } catch {
+      /* storage unavailable */
+    }
+  };
 
   const rows: Row[] = useMemo(
     () =>
@@ -130,7 +154,7 @@ export function AircraftView(props: {
       if (a.lat === null || a.lon === null) continue;
       live.add(a.hex);
       const on = a.hex === hl;
-      const key = `${Math.round((a.track ?? 0) / 3)}|${altColor(a.alt)}|${on}|${name(a)}|${fl(a.alt)}`;
+      const key = `${Math.round((a.track ?? 0) / 3)}|${altColor(a.alt)}|${on}|${mapLabel(a)}`;
       let e = l.markers.get(a.hex);
       if (!e) {
         const m = L.marker([a.lat, a.lon], { icon: icon(a, on), riseOnHover: true });
@@ -191,7 +215,21 @@ export function AircraftView(props: {
 
   const cols: Col<Row>[] = useMemo(
     () => [
-      { key: "call", label: "callsign", sort: (r) => r.flight || null, render: (r) => r.flight || <span className="dim">-</span> },
+      {
+        key: "call", label: "callsign", sort: (r) => r.flight || null,
+        render: (r) => (r.flight ? <span title={[r.airline, r.radio && `"${r.radio}"`, r.flightNumber && `flight ${r.flightNumber}`].filter(Boolean).join(" ")}>{r.flight}</span> : dash),
+      },
+      ...(metaCols
+        ? ([
+            { key: "airline", label: "airline", sort: (r) => r.airline || null, render: (r) => (r.airline ? <span title={r.radio ? `radio callsign: ${r.radio}` : undefined}>{r.airline}</span> : dash) },
+            { key: "type", label: "type", sort: (r) => r.type || null, render: (r) => (r.type ? <span title={r.type}>{shortType(r.type)}</span> : dash) },
+            { key: "reg", label: "reg", sort: (r) => r.registration || null, render: (r) => r.registration || dash },
+            {
+              key: "country", label: "country", sort: (r) => r.country || null,
+              render: (r) => (r.country ? <span title={r.country}>{flag(r.country) || r.country}</span> : dash),
+            },
+          ] as Col<Row>[])
+        : []),
       { key: "hex", label: "hex", sort: (r) => r.hex, render: (r) => r.hex },
       { key: "alt", label: "alt ft", right: true, firstDir: -1, sort: (r) => (r.alt === "ground" ? 0 : r.alt), render: (r) => (r.alt === "ground" ? "gnd" : r.alt ?? "") },
       { key: "trend", label: "", sort: (r) => r.trend, render: (r) => (r.trend > 0 ? <span className="up">↑</span> : r.trend < 0 ? <span className="down">↓</span> : "") },
@@ -208,8 +246,10 @@ export function AircraftView(props: {
         ),
       },
     ],
-    [],
+    [metaCols],
   );
+  const selRow = useMemo(() => rows.find((r) => r.hex === selected) ?? null, [rows, selected]);
+  const hasMeta = useMemo(() => view.aircraft.some((a) => a.airline || a.registration || a.type), [view.aircraft]);
 
   return (
     <div className="split">
@@ -230,7 +270,11 @@ export function AircraftView(props: {
         )}
       </MapBox>
       <div className="side">
-        <div className="dim pad">{props.source ?? "ADS-B"}: {view.aircraft.length} aircraft, {view.withPos} with position</div>
+        <div className="dim pad">
+          {props.source ?? "ADS-B"}: {view.aircraft.length} aircraft, {view.withPos} with position{" "}
+          <button className={`mini ${metaCols ? "on" : ""}`} onClick={toggleCols} title="Show or hide the airline, type, registration and country columns">meta cols</button>
+        </div>
+        {selRow && <Detail a={selRow} onClose={() => setSelected(null)} />}
         <SortTable
           key={receiver ? "rx" : "norx"}
           rows={rows}
@@ -243,6 +287,42 @@ export function AircraftView(props: {
           rowClass={(r) => (r.hex === selected ? "sel" : r.hex === hover ? "hov" : "")}
           selectedKey={selected}
         />
+        {hasMeta && <DataSources kind="aircraft" />}
+      </div>
+    </div>
+  );
+}
+
+function Detail({ a, onClose }: { a: Row; onClose: () => void }) {
+  const kv: [string, string][] = [
+    ["airline", a.airline + (a.radio ? ` ("${a.radio}")` : "")],
+    ["flight", [a.flight, a.flightNumber && `(no. ${a.flightNumber})`].filter(Boolean).join(" ")],
+    ["registration", a.registration],
+    ["type", a.type],
+    ["year", a.year === null ? "" : String(a.year)],
+    ["country", [flag(a.country), a.country].filter(Boolean).join(" ")],
+    ["hex", a.hex.toUpperCase()],
+    ["altitude", a.alt === "ground" ? "ground" : a.alt === null ? "" : `${a.alt} ft`],
+    ["speed / track", a.gs === null && a.track === null ? "" : `${a.gs === null ? "-" : Math.round(a.gs)} kt / ${a.track === null ? "-" : Math.round(a.track) + "°"}`],
+    ["range / bearing", a.range === null || a.bearing === null ? "" : `${a.range.toFixed(1)} nmi / ${Math.round(a.bearing)}°`],
+    ["rssi", a.rssi === null ? "" : `${a.rssi.toFixed(1)} dB`],
+    ["messages", a.messages === null ? "" : String(a.messages)],
+  ];
+  return (
+    <div className="acdetail">
+      <div className="acdetail-head">
+        <b>{name(a)}</b>
+        <a href={link(a.hex)} target="_blank" rel="noopener noreferrer">ADS-B Exchange ↗</a>
+        <span style={{ flex: 1 }} />
+        <button className="mini" onClick={onClose} title="Close">×</button>
+      </div>
+      <div className="kvgrid">
+        {kv.filter(([, v]) => v !== "").map(([k, v]) => (
+          <span key={k} style={{ display: "contents" }}>
+            <span className="dim">{k}</span>
+            <span>{v}</span>
+          </span>
+        ))}
       </div>
     </div>
   );

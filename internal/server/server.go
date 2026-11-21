@@ -17,6 +17,7 @@ import (
 	"github.com/wardviaene/sweep/data"
 	"github.com/wardviaene/sweep/internal/config"
 	"github.com/wardviaene/sweep/internal/decoder"
+	"github.com/wardviaene/sweep/internal/meta"
 	"github.com/wardviaene/sweep/internal/radio"
 	"github.com/wardviaene/sweep/internal/survey"
 )
@@ -114,8 +115,9 @@ type Deps struct {
 	Events    *decoder.Events
 	Config    *config.Store
 	Survey    *survey.Runner
-	Static    fs.FS  // built web UI, may be nil
-	RecordDir string // where POST /api/record writes cu8 files
+	Meta      *meta.DB // offline names for aircraft, airlines, satellites, frequencies; may be nil
+	Static    fs.FS    // built web UI, may be nil
+	RecordDir string   // where POST /api/record writes cu8 files
 }
 
 // Handler returns the HTTP handler.
@@ -253,12 +255,19 @@ func Handler(d Deps) http.Handler {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		d, err := decodeDemod(body)
+		dr, err := decodeDemod(body)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		st, err := r.SetDemod(d)
+		// The dsd decoder owns the audio stream (digital voice); asking for an
+		// analog demod means the user wants to hear that instead.
+		if dr.Mode != nil && *dr.Mode != "off" && d.Decoders != nil {
+			if cur := d.Decoders.Status(); cur.Running && cur.Name == "dsd" {
+				d.Decoders.Stop()
+			}
+		}
+		st, err := r.SetDemod(dr)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -284,8 +293,10 @@ func Handler(d Deps) http.Handler {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		labelPeaks(d.Meta, res.Peaks)
 		writeJSON(w, http.StatusOK, res)
 	})
+	metaRoutes(mux, d)
 	mux.HandleFunc("GET /ws/spectrum", func(w http.ResponseWriter, req *http.Request) {
 		serveSpectrum(w, req, hub)
 	})

@@ -10,7 +10,8 @@ type Peak struct {
 	FreqHz float64 `json:"freq_hz"`
 	DB     float64 `json:"db"`
 	SNR    float64 `json:"snr_db"`
-	Spur   bool    `json:"spur,omitempty"` // near a multiple of the RTL2832 28.8 MHz crystal
+	Spur   bool    `json:"spur,omitempty"`  // near a multiple of the RTL2832 28.8 MHz crystal
+	Label  string  `json:"label,omitempty"` // known channel or visible satellite at this frequency (docs/metadata.md)
 }
 
 // CrystalHz is the RTL2832U reference; its harmonics show up as internal spurs.

@@ -62,15 +62,19 @@ export function AprsView(props: { view: View; registerCenter: RegisterCenter; ti
     if (map && st && st.lat !== null && st.lon !== null) map.panTo([st.lat, st.lon]);
   };
 
+  const hasSat = useMemo(() => view.packets.some((p) => p.satellite !== ""), [view.packets]);
   const cols: Col<AprsPacket>[] = useMemo(
     () => [
       { key: "time", label: "time", sort: (r) => r.id, firstDir: -1, render: (r) => time(r.ts) },
       { key: "from", label: "from", sort: (r) => r.from, render: (r) => r.from },
       { key: "path", label: "to / path", sort: (r) => r.to, render: (r) => `${r.to}${r.path ? " via " + r.path : ""}` },
+      ...(hasSat
+        ? ([{ key: "sat", label: "satellite", sort: (r) => r.satellite || null, render: (r) => (r.satellite ? <span className="lbl">{r.satellite}</span> : "") }] as Col<AprsPacket>[])
+        : []),
       { key: "pos", label: "pos", sort: (r) => (r.lat === null ? null : r.lat), render: (r) => (r.lat === null || r.lon === null ? "" : "●") },
       { key: "info", label: "comment / info", sort: (r) => r.info, render: (r) => <span className="kv">{r.info}</span> },
     ],
-    [],
+    [hasSat],
   );
 
   const withPos = pts.length;
