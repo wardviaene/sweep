@@ -70,7 +70,9 @@ Play a recording back with `bin/sdrd -iq recordings/<file>.cu8`. The center freq
 make test
 ```
 
-The Go tests need no hardware. They cover the rtl_tcp protocol, FFT bin placement, peak finding, demodulators on synthetic signals (tone recovery, adjacent-channel and sideband rejection), the APRS/AIS/SBS parsers, and a band catalog validation.
+The Go tests need no hardware. They cover the rtl_tcp protocol, FFT bin placement, peak finding, demodulators on synthetic signals (tone recovery, adjacent-channel and sideband rejection), the APRS/AIS/SBS parsers, a band catalog validation, and (when rtl_433 is installed) a synthetic 433 MHz remote burst decoded through rtl_433 with the decoder's exact arguments.
+
+Verified on air with the NESDR v5 and a 400 MHz-1 GHz log-periodic: spectrum, tuning, NFM audio and squelch, and ADS-B (11 aircraft tracked within 100 s).
 
 For an end-to-end APRS check without RF, generate packets with direwolf's `gen_packets` and FM-modulate them in the synthetic source:
 

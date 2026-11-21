@@ -39,8 +39,7 @@ func (m *Manager) runRTL433(ctx context.Context, st *Status) error {
 	}
 	m.setFreq(st, center)
 
-	cmd := exec.CommandContext(ctx, bin, "-r", "cu8:-", "-s", strconv.Itoa(rate), "-f", strconv.Itoa(int(center)),
-		"-F", "json", "-M", "level", "-M", "time:unix")
+	cmd := exec.CommandContext(ctx, bin, rtl433Args(rate, center)...)
 	return m.runPiped(ctx, "rtl_433", cmd, func(line string) {
 		var obj map[string]any
 		if json.Unmarshal([]byte(line), &obj) == nil {
@@ -49,6 +48,12 @@ func (m *Manager) runRTL433(ctx context.Context, st *Status) error {
 	}, func(l string) bool {
 		return strings.Contains(strings.ToLower(l), "error") || strings.Contains(l, "fail")
 	})
+}
+
+// rtl433Args reads cu8 IQ from stdin and prints one JSON object per decode.
+func rtl433Args(rate int, center uint32) []string {
+	return []string{"-r", "cu8:-", "-s", strconv.Itoa(rate), "-f", strconv.Itoa(int(center)),
+		"-F", "json", "-M", "level", "-M", "time:unix"}
 }
 
 // runPiped starts cmd with an IQ tap on stdin, handles stdout lines with onLine
