@@ -24,7 +24,7 @@ export interface ScannerApi {
 
 const FAST_MS = 500;
 
-/** Polls GET /api/scanner: every 500 ms while running (or while the panel is open and idle, 1 s), 3 s otherwise. */
+/** Polls GET /api/scanner: every 500 ms while running (or while the panel is open and idle, 1 s), 2 s otherwise. */
 export function useScanner(open: boolean): ScannerApi {
   const [state, setState] = useState<ScannerState | null>(null);
   const [priority, setPriority] = useState<number[]>([]);
@@ -61,7 +61,7 @@ export function useScanner(open: boolean): ScannerApi {
           if (stopped) return;
           const st = stateRef.current?.state;
           const running = st === "watching" || st === "locked";
-          timer = window.setTimeout(loop, running ? FAST_MS : openRef.current ? 1000 : 3000);
+          timer = window.setTimeout(loop, running ? FAST_MS : openRef.current ? 1000 : 2000);
         });
     };
     pollNow.current = loop;

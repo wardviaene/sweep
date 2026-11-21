@@ -9,8 +9,8 @@ export interface AutopilotApi {
   refresh: () => void;
 }
 
-/** GET /api/autopilot every 1 s while a pass is current, else every 10 s; only while `active`. */
-export function useAutopilot(active: boolean): AutopilotApi {
+/** GET /api/autopilot every 1 s while a pass is current, else every `idleMs` (10 s); only while `active`. */
+export function useAutopilot(active: boolean, idleMs = 10_000): AutopilotApi {
   const [state, setState] = useState<Autopilot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const kick = useRef<(() => void) | null>(null);
@@ -21,7 +21,7 @@ export function useAutopilot(active: boolean): AutopilotApi {
     let timer: number | undefined;
     const poll = async () => {
       window.clearTimeout(timer);
-      let ms = 10_000;
+      let ms = idleMs;
       try {
         const s = await getAutopilot(ac.signal);
         setState(s);
@@ -40,7 +40,7 @@ export function useAutopilot(active: boolean): AutopilotApi {
       window.clearTimeout(timer);
       kick.current = null;
     };
-  }, [active]);
+  }, [active, idleMs]);
 
   const patch = useCallback((p: AutopilotPatch) => {
     // optimistic, then the server's merged answer

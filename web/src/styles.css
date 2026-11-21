@@ -350,3 +350,28 @@ button.danger { border-color: var(--bad); color: var(--bad); }
 .trv-item.silent { opacity: 0.7; }
 .badge.src-survey { color: var(--ok); border-color: var(--ok); }
 .badge.src-manual { color: var(--text); border-color: var(--dim); }
+
+/* explore menu + radio pill */
+.explore { position: relative; display: inline-block; }
+.explore-menu {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 2500; width: 320px; max-width: 92vw; padding: 4px;
+  background: var(--panel); border: 1px solid var(--dim); border-radius: 4px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+}
+.explore-menu button {
+  display: flex; gap: 8px; align-items: flex-start; width: 100%; text-align: left; padding: 6px 8px; border: 0; background: none;
+}
+.explore-menu button:hover, .explore-menu button:focus-visible { background: rgba(255, 255, 255, 0.07); outline: none; }
+.explore-menu .ico { flex: none; width: 1.4em; text-align: center; }
+.explore-menu .desc { display: block; color: var(--dim); font-size: 11px; font-weight: normal; white-space: normal; }
+.explore-menu b { display: block; }
+.radio-pill {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: min(420px, 100%); padding: 2px 8px;
+  border: 1px solid var(--border); border-radius: 12px; font-size: 11px;
+}
+.radio-pill .pill-main { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: none; border: 0; padding: 0; color: inherit; }
+.radio-pill .pill-main:hover { text-decoration: underline; }
+.radio-pill .pill-label { color: var(--dim); }
+.radio-pill.busy { border-color: var(--ok); }
+.radio-pill.busy .pill-dot { color: var(--ok); }
+.radio-pill .pill-stop { flex: none; }
+.scn-intro { margin: 0 0 6px; }

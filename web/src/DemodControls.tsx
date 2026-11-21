@@ -115,7 +115,7 @@ export function DemodControls({ status, demod, audio, locked = false, transcript
           />
           off
         </label>{" "}
-        <span className="dim">{sqDb === null ? "" : `${sq} dB`}</span>
+        <span className="dim">{sqDb === null ? "" : `${Math.round(sq)} dB`}</span>
       </span>
       <span className="item">
         <button className={audio.on ? "on" : ""} onClick={audio.toggle} title="Audio needs a click to start (browser policy)">

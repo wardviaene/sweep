@@ -1,106 +1,120 @@
 # sweep
 
-A local RTL-SDR control station for macOS: live spectrum and waterfall, click-to-tune, a band catalog (US and EU), NFM/AM/SSB audio in the browser, and one-click decoders (rtl_433 sensors, ADS-B aircraft, APRS packets, AIS ships). Everything the UI does is also available over HTTP and through the `sdrctl` CLI, so an agent can drive the radio.
+A local RTL-SDR control station for macOS. It gives you a live spectrum and waterfall, a band catalog (US and EU), audio in the browser, and one-click decoders: aircraft, weather data, packet radio, ships, sensors, satellites and SSTV pictures. It can also listen to a band and play each transmission as it happens, transcribing it locally. Everything the UI does is also available over an HTTP/WebSocket API and the `sdrctl` CLI, so scripts and agents can drive the radio.
 
 **Receive only.** There is no transmit code.
 
 Built and tested with a Nooelec NESDR SMArt v5 (RTL2832U + R820T, 0.5 ppm TCXO) on an Apple Silicon Mac.
 
+![APRS packets on the map, live waterfall and band catalog](docs/images/aprs.png)
+
+<sub>All screenshots come from the built-in synthetic signal source (`sdrd -synth`), not from a real location.</sub>
+
 ## Quick start
 
 ```bash
-brew install librtlsdr rtl_433 dump1090-fa direwolf sox   # sox is only for the starter commands
-make envcheck                                              # dongle, tuner and tools
+brew install librtlsdr rtl_433 dump1090-fa direwolf sox
+make envcheck                     # dongle, tuner and tools
 cd web && npm install && cd ..
-make dev                                                   # sdrd + Vite; open http://localhost:5173
+make dev                          # sdrd + Vite; open http://localhost:5173
 ```
 
 No dongle? `make dev-synth` runs everything against a synthetic IQ source.
 
-Decoders not in Homebrew (radiosondes, UAT 978, DMR/D-STAR/YSF via dsd-fme) build from pinned upstream commits into `~/.local/share/sweep/bin`:
+Optional extras:
 
 ```bash
-brew install cmake libsndfile ncurses mbelib pulseaudio codec2
-make decoders
+make metadata                     # airline, aircraft and satellite datasets (bulk, offline lookups)
+brew install whisper-cpp && make whisper-model           # local speech-to-text
+brew install cmake libsndfile ncurses mbelib pulseaudio codec2 && make decoders   # UAT 978, radiosondes, DMR/D-STAR
 ```
 
-## What's on the air?
+## Explore
 
-Set your antenna (gear icon, or `sdrctl antenna jpole`). The band panel then marks which bands fit it. **◎ What's on the air?** runs a short survey with that antenna: a scan of every band that fits, then each matching decoder for a sample period (20 s by default). Results come back as cards, with the ones that heard something first. Each card shows what was found (aircraft, sensors, stations, calls, carriers), a few samples, and buttons to open that decoder or listen to a carrier. The survey takes over the radio and restores your tuning afterwards.
+The **◎ Explore** menu has three modes. A status pill next to it always shows what is using the radio, with a stop link.
 
-```bash
-sdrctl survey -seconds 20            # plan from the configured antenna
-sdrctl survey scan:2m aprs           # or explicit steps
-```
+![The Explore menu](docs/images/explore-menu.png)
 
-Antenna presets live in `data/bands.json`: the log-periodic 400 MHz-1 GHz, a dual-band 2 m/70 cm J-pole, wideband, HF long wire, and unknown.
+### 🔍 Discover: what can my antenna receive?
 
-## Decoded data
+Set your antenna in settings (log-periodic, dual-band J-pole, wideband, HF wire). The band panel then marks which bands fit it. Discover is a one-off run of about 2–3 minutes. It scans every band that fits, runs each matching decoder for a short sample, and returns a report with the bands that heard something first. Each card has buttons to open that decoder or to listen to a carrier. With "play what Discover hears" on, you hear each voice band's strongest carrier as it goes. Your tuning is restored afterwards.
 
-The decoder panel (expand it with ⤢) has a view per decoder:
+![Discover report](docs/images/discover.png)
 
-- **Aircraft (ADS-B)**: map with altitude-coloured, track-rotated aircraft, trails, and a table with altitude, speed, track and climb/descent. Once a receiver location is set it adds range rings and range/bearing.
-- **APRS**: stations on the map with their tracks, plus the packet list.
-- **AIS**: vessels on the map plus a table, with names and callsigns merged from static messages.
-- **Sensors (rtl_433)**: one card per device with the latest readings and temperature/humidity sparklines.
-- **UAT 978**: the same aircraft map (US general aviation), plus FIS-B weather text (METAR, TAF, winds aloft) grouped by type.
-- **Radiosondes**: weather balloons at 400-406 MHz (RS41, DFM, M10, LMS6), with a map track and temperature/humidity vs altitude. Auto mode tunes to the strongest carrier; launches happen around 00 and 12 UTC.
-- **Digital voice (dsd)**: DMR, D-STAR, YSF and NXDN call log, with voice in the audio stream. Amateur bands only; encrypted traffic is never decrypted.
-- **Meters**: your own utility meter (ERT/R900, about 912-920 MHz). Other meters are counted but their IDs are never stored or shown.
-- **Packet**: AX.25 at 1200 or 9600 baud, for example amateur satellite telemetry at 435-438 MHz.
+### 🎧 Listen live: hear transmissions as they happen
 
-Maps use OpenStreetMap tiles. Your browser fetches them from tile.openstreetmap.org, so OSM can see which area you view. sdrd itself makes no external calls.
+The scanner watches a band (for example Aviation VHF) and learns which carriers are always on (interference). When a new carrier appears, it switches to it and plays it for as long as it lasts. Each call lands in an activity log with its channel name (UNICOM, MULTICOM, …), and with whisper installed, a transcript. Noisy channels can be locked out and favorites prioritized.
 
-**Receiver location.** Set it with the gear icon or `sdrctl location <lat> <lon>`. sdrd stores it in `~/.config/sweep/config.json` (mode 0600), outside the repository, and `.gitignore` blocks local config files. Don't put a real location in the repo, docs or tests.
+![Listen live catching transmissions](docs/images/listen-live.png)
 
-Scan and IQ recording are under **Tools** in the control bar.
+### 🛰 Satellites
 
-## Layout
+Set the receiver location (gear icon; stored only in `~/.config/sweep/config.json`). The Satellites tab then shows what is overhead, a sky plot and upcoming passes, computed locally from CelesTrak orbits and SatNOGS downlinks. The **pass autopilot** takes the radio for each pass you choose. It tunes the downlink, corrects for Doppler every second, runs the right decoder (AX.25 packet, SSTV, or FM audio), and saves packets, pictures and audio per pass.
 
-```
-cmd/sdrd         daemon: owns the dongle through a private rtl_tcp, FFT, demod, decoders, HTTP/WS API
-cmd/sdrctl       CLI client (JSON output)
-internal/rtltcp  rtl_tcp protocol client and process supervisor
-internal/dsp     spectrum (FFT), peak finding, NFM/AM/USB/LSB demodulator
-internal/radio   tuning state, IQ pipeline, listening VFO, decoder taps
-internal/decoder rtl_433 / dump1090 / direwolf workers, APRS/AIS/SBS parsers, event store
-internal/server  REST and WebSocket API
-internal/source  synthetic IQ (with optional FM-modulated WAV) and cu8 playback
-data/bands.json  band catalog, embedded in sdrd
-web/             Vite + React + TypeScript UI
-docs/protocol.md the API
-```
+**SSTV** pictures (for example from ISS events on 145.800 MHz) are decoded natively: Robot36, PD90/120/180, Martin1, Scottie1.
 
-## How it works
+![SSTV picture being received](docs/images/sstv.png)
 
-`sdrd` starts `rtl_tcp` on a private port and is its only client, so it is the single owner of the dongle. IQ (`cu8`, 2.048 MS/s by default) feeds three consumers at once:
+## Decoders
 
-- **Spectrum**: Blackman-Harris FFT (2048 bins), power-averaged and sent as 20 fps `uint8` dB frames on `/ws/spectrum`.
-- **Listening VFO**: a two-stage decimating channel filter and an NFM/AM/SSB demodulator in Go. Its audio goes out on `/ws/audio`.
-- **Decoders** (one at a time): raw IQ piped to `rtl_433 -r cu8:-` or `dump1090 --ifile -`, or audio from a private NFM demod piped to `direwolf`. The waterfall keeps running while a decoder runs.
+| Decoder | What you get | Tool |
+|---|---|---|
+| ADS-B 1090 / UAT 978 | Aircraft map with airline, type and registration, plus FIS-B weather (METAR/TAF) | dump1090, dump978 |
+| APRS / packet | Stations on the map, packets, satellite telemetry | direwolf |
+| AIS | Ships on the map | direwolf |
+| rtl_433 | Sensors (temperature, humidity, …) with sparklines | rtl_433 |
+| Utility meters | Your own meter only; other meters are counted, never shown | rtl_433 |
+| Radiosondes | Weather balloon track and sounding profile | rs1729 decoders |
+| Digital voice | DMR/D-STAR/YSF call log and audio (amateur bands only, never decrypts) | dsd-fme |
+| SSTV | Pictures, decoded in Go | built in |
+| Voice transcription | Text for every scanned call, filterable and searchable | whisper.cpp |
 
-Below 24 MHz, `sdrd` switches the v5 to direct sampling (Q branch; `-direct-branch 1` for I) for HF.
+Metadata (airline names, aircraft type and registration, satellite names) comes from bulk datasets downloaded once by `make metadata` and looked up offline. Nothing is looked up online per aircraft or station.
 
-## sdrctl
+## API
 
-`SDRD_ADDR` (default `127.0.0.1:8073`) selects the daemon. Output is JSON.
+Everything is scriptable. [docs/api.md](docs/api.md) is the full reference (REST, WebSocket frame formats, event shapes, examples in curl, JavaScript and Python), and [docs/openapi.yaml](docs/openapi.yaml) is the OpenAPI 3.1 spec. A test keeps the spec in sync with the server's routes.
 
 ```bash
 sdrctl status
-sdrctl tune 446.1M -gain 29.7          # gain snaps to the tuner's steps; -gain auto
-sdrctl peaks -n 5                      # carriers above the noise floor (crystal spurs flagged)
-sdrctl spectrum -bins 64
+sdrctl tune 446.1M -gain 29.7
+sdrctl peaks -n 5
 sdrctl listen 162.55M -mode nfm -squelch -60
-sdrctl demod off
-sdrctl bands -region eu
-sdrctl band air                        # tune to a band and start its default mode
-sdrctl decoder rtl_433                 # rtl_433 | adsb | aprs | ais | none
-sdrctl events -decoder rtl_433 -limit 20
-sdrctl scan 430M 440M -dwell 500       # step across a range, return the strongest carriers
-sdrctl record 5                        # cu8 recording in ./recordings
+sdrctl decoder adsb && sdrctl events -decoder adsb -limit 5
+sdrctl survey                         # Discover from the CLI
+sdrctl scanner air -follow            # Listen live from the CLI
+sdrctl transcripts -q runway
+sdrctl sats passes -hours 12
+sdrctl record 10                      # raw IQ; play back with: bin/sdrd -iq <file>
 ```
 
-Play a recording back with `bin/sdrd -iq recordings/<file>.cu8`. The center frequency and rate come from the file name.
+**Security:** sdrd has no authentication and binds to `127.0.0.1` by default. Don't expose it on a network without an authenticating proxy.
+
+## How it works
+
+`sdrd` (Go) starts `rtl_tcp` on a private port and is its only client, so it alone owns the dongle. The IQ stream feeds several consumers at once:
+
+- **Spectrum frames:** Blackman-Harris FFT at 20 fps.
+- **The listening demodulator:** NFM/AM/USB/LSB, written in Go.
+- **Private channel taps for the decoders:** raw IQ for rtl_433/dump1090/dump978, demodulated audio for direwolf/dsd-fme/SSTV/radiosondes.
+- **The scanner and Discover:** both work from the spectrum frames.
+
+The React UI talks to it over REST and WebSockets. Below 24 MHz the v5 switches to direct sampling for HF.
+
+```
+cmd/sdrd, cmd/sdrctl    daemon and CLI
+internal/radio, dsp     IQ pipeline, FFT, demodulators, taps
+internal/decoder        external decoder workers and parsers
+internal/scanner        Listen live
+internal/survey         Discover
+internal/autopilot      satellite passes (Doppler tracking)
+internal/sstv           SSTV decoder
+internal/transcribe     whisper.cpp integration
+internal/meta           offline metadata (airlines, FAA registry, satellites)
+data/bands.json         band catalog and antenna presets
+web/                    Vite + React + TypeScript UI
+docs/                   API reference and OpenAPI spec
+```
 
 ## Testing
 
@@ -108,23 +122,24 @@ Play a recording back with `bin/sdrd -iq recordings/<file>.cu8`. The center freq
 make test
 ```
 
-The Go tests need no hardware. They cover the rtl_tcp protocol, FFT bin placement, peak finding, demodulators on synthetic signals (tone recovery, adjacent-channel and sideband rejection), the APRS/AIS/SBS parsers, a band catalog validation, and (when rtl_433 is installed) a synthetic 433 MHz remote burst decoded through rtl_433 with the decoder's exact arguments.
+The Go tests need no hardware. The synthetic source can FM-modulate WAV files (`-synth-fm`) and key bursty carriers (`-synth-burst`), so the decoders, scanner, Discover, autopilot, SSTV and transcription are all tested end to end without RF.
 
-Verified on air with the NESDR v5 and a 400 MHz-1 GHz log-periodic: spectrum, tuning, NFM audio and squelch, and ADS-B (11 aircraft tracked within 100 s).
+Verified on air with the NESDR v5:
+- **Log-periodic antenna:** ADS-B (11 aircraft in 100 s) and UAT (aircraft and METAR weather reports).
+- **Dual-band J-pole:** NOAA Weather Radio voice (transcribed accurately); Listen live caught and transcribed real UNICOM/MULTICOM airband calls.
+- **Satellites:** the autopilot ran a real satellite pass with live Doppler tracking.
 
-For an end-to-end APRS check without RF, generate packets with direwolf's `gen_packets` and FM-modulate them in the synthetic source:
+## Privacy
 
-```bash
-echo 'N0CALL-9>APRS,WIDE2-1:!4903.50N/07201.75W>test' > msg.txt
-gen_packets -a 100 -o aprs.wav msg.txt
-bin/sdrd -synth -synth-fm 144.39M:aprs.wav
-sdrctl decoder aprs && sleep 5 && sdrctl events -decoder aprs
-```
+- Receiver location, utility meter IDs, recordings, transcripts and pass data live only on your machine, in `~/.config/sweep/` and `~/.local/share/sweep/`.
+- `.gitignore` blocks raw IQ and audio formats anywhere in the repo.
+- Map tiles come from OpenStreetMap, so OSM sees which area you view.
+- Transcription runs locally.
 
 ## Notes and known limits
 
-- **Crystal spurs.** Peaks at multiples of 28.8 MHz (460.8, 518.4, 633.6 MHz, ...) come from the dongle itself. `/api/peaks` marks them with `spur: true`.
-- **Gain.** Auto gain on the R820T raises the noise floor a lot. `sdrd` starts at 29.7 dB.
-- **Mode switching.** Starting a decoder retunes the radio. Retuning while a decoder runs usually breaks the decoding.
-- **Weather satellites.** NOAA-15/18/19 APT were retired in 2025. The catalog points to Meteor-M LRPT, recorded with `rtl_sdr` and decoded offline in SatDump.
-- **Antennas.** What you can hear depends on the antenna. Each band in the catalog lists a suitable one.
+- **Crystal spurs:** peaks at multiples of 28.8 MHz come from the dongle itself and are flagged.
+- **Local interference:** computers, USB devices and power supplies create steady carriers. Listen live learns and ignores them; you can also lock them out.
+- **Transcription accuracy:** on noisy AM airband audio, expect the gist (phrases like "runway one seven, left downwind") with callsigns and numbers often wrong. A larger whisper model and a better-tuned antenna help.
+- **Weather satellites:** NOAA APT was retired in 2025. Meteor-M LRPT needs SatDump (not integrated).
+- **Antennas:** what you can hear depends on the antenna. The catalog lists a suitable antenna per band, and Discover tells you what yours picks up.

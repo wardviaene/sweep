@@ -130,7 +130,7 @@ function Detail({ band: b, region, onJump, onChannel, onDecoder, onScan }: Props
       <div className="btns">
         <button onClick={() => onJump(b)} title={`Tune to ${fmt(b.tune_mhz)} MHz`}>Jump</button>
         {onScan && isVoiceBand(b) && (
-          <button className={b.id === "air" ? "primary" : ""} onClick={() => onScan(b)} title="Watch the band and jump to each transmission">⟲ Scan for voice</button>
+          <button className={b.id === "air" ? "primary" : ""} onClick={() => onScan(b)} title="Listen live: watch this band and play each transmission as it happens">🎧 Listen live</button>
         )}
         {b.decoder && <button onClick={() => onDecoder(b.decoder!, optsFor(b.decoder!, b.tune_mhz))}>Start {b.decoder}</button>}
       </div>

@@ -3,7 +3,7 @@ import type { Survey, SurveyStep, Transcript } from "./api";
 import { TranscriptLine } from "./Clips";
 import { surveyTranscript } from "./transcripts";
 import { antennaFit, planSurvey, type Antenna, type Band, type BandMode, type Catalog } from "./bands";
-import { useSurvey } from "./useSurvey";
+import type { SurveyApi } from "./useSurvey";
 
 const DEFAULT_SECONDS = 20;
 const MAX_SAMPLES = 3;
@@ -75,6 +75,8 @@ export function sampleText(decoder: string | undefined, d: Rec): string {
 
 interface Props {
   open: boolean;
+  /** survey state/actions (owned by App so the radio pill can see it) */
+  sv: SurveyApi;
   onClose: () => void;
   catalog: Catalog | null;
   /** configured antenna id */
@@ -96,7 +98,7 @@ const mhzStr = (hz: number) => (hz / 1e6).toFixed(3);
 
 export function SurveyPanel(p: Props) {
   const { open, catalog } = p;
-  const sv = useSurvey(open);
+  const sv = p.sv;
   const { survey } = sv;
   const antennas = catalog?.antennas ?? [];
 
@@ -131,10 +133,10 @@ export function SurveyPanel(p: Props) {
   // Summary line for the decoder panel header.
   const summary = useMemo(() => {
     if (!survey || survey.state === "idle" || survey.steps.length === 0) return null;
-    if (survey.state === "running") return "Survey running…";
+    if (survey.state === "running") return "Discover running…";
     const counted = survey.steps.filter((s) => s.state !== "skipped");
     const found = counted.filter((s) => (s.found ?? 0) > 0).length;
-    return `Last survey: ${found} of ${counted.length} found data`;
+    return `Last Discover: ${found} of ${counted.length} found data`;
   }, [survey]);
   const onSummary = p.onSummary;
   useEffect(() => onSummary(summary), [summary, onSummary]);
@@ -191,12 +193,12 @@ export function SurveyPanel(p: Props) {
   if (!open) return null;
 
   return (
-    <aside className="sv" role="dialog" aria-label="What's on the air?">
+    <aside className="sv" role="dialog" aria-label="Discover: what can my antenna receive?">
       <div className="bar sv-head">
-        <strong>◎ What's on the air?</strong>
+        <strong title="One-off report on what your antenna can receive (about 2-3 min)">🔍 Discover — what can my antenna receive?</strong>
         {survey && survey.state !== "idle" && <span className={`dim`}>{survey.state}</span>}
         <span style={{ flex: 1 }} />
-        <button onClick={p.onClose} title="Close (the survey keeps running)">✕</button>
+        <button onClick={p.onClose} title="Close (Discover keeps running)">✕</button>
       </div>
       <div className="sv-body">
         {sv.error && <div className="decerr">{sv.error}</div>}
@@ -307,8 +309,8 @@ function Setup(p: {
   return (
     <>
       <p className="dim pad0">
-        Runs a short band scan and each decoder in turn with your antenna and reports what was heard. The survey takes over the radio
-        and restores your tuning afterwards.
+        A one-off run of about 2-3 minutes: it checks each band and decoder that fits your antenna, then gives you a report of what
+        was heard. Your tuning is restored afterwards. To hear live transmissions as they happen, use Explore → Listen live instead.
       </p>
       <div className="sv-form">
         <label>
@@ -337,7 +339,7 @@ function Setup(p: {
         </label>
         <div className="sv-listen">
           <label className="chk">
-            <input type="checkbox" checked={p.listen} onChange={(e) => p.setListen(e.target.checked)} /> Play what the survey hears
+            <input type="checkbox" checked={p.listen} onChange={(e) => p.setListen(e.target.checked)} /> Play what Discover hears
             <input
               type="number"
               min={2}
@@ -395,7 +397,7 @@ function Setup(p: {
       )}
       <div className="row sv-actions">
         <button className="primary" disabled={!p.hasAnt || p.count === 0 || p.busy} onClick={p.onStart}>
-          {p.busy ? "Starting…" : "Start survey"}
+          {p.busy ? "Starting…" : "Start Discover"}
         </button>
         {p.canCancel && <button onClick={p.onCancel}>Back to results</button>}
       </div>
@@ -467,7 +469,7 @@ function Progress(p: {
           </span>
           <span className="dim">{[survey.antenna, survey.region?.toUpperCase()].filter(Boolean).join(" · ")}</span>
           <span style={{ flex: 1 }} />
-          {running ? <button onClick={p.onStop}>Stop</button> : <button className="primary" disabled={p.busy} onClick={p.onNew}>New survey</button>}
+          {running ? <button onClick={p.onStop}>Stop</button> : <button className="primary" disabled={p.busy} onClick={p.onNew}>New Discover run</button>}
         </div>
         {p.note && <div className="conn-open">{p.note}</div>}
       </div>

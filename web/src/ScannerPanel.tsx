@@ -140,7 +140,7 @@ export function ScannerPanel({ scanner, audio, catalog, region, events, transcri
 
   const actions = (hz: number, label?: string) => (
     <span className="scn-act">
-      <button className="mini" title="Stop the scanner and listen here" onClick={() => onListen(hz, mode_)}>Listen</button>
+      <button className="mini" title="Stop Listen live and tune here" onClick={() => onListen(hz, mode_)}>Listen</button>
       <button className="mini" title={`Never stop on ${mhz(hz)} MHz${label ? ` (${label})` : ""}`} onClick={() => scanner.lockout(hz)}>Lockout</button>
       <button className={`mini ${prio.has(hz) ? "on" : ""}`} disabled={!running || prio.has(hz) || scanner.busy} title="Let this channel interrupt a running transmission" onClick={() => scanner.prioritize(hz)}>
         {prio.has(hz) ? "Priority" : "Prioritize"}
@@ -151,7 +151,7 @@ export function ScannerPanel({ scanner, audio, catalog, region, events, transcri
   return (
     <div className="scn">
       <div className="bar scn-head">
-        <span className="label">scanner</span>
+        <strong title="Plays each transmission as it happens; runs until you stop it">🎧 Listen live — scanner</strong>
         <span className={`scn-status ${state?.state ?? "idle"}`}>
           {state?.state === "locked" && a ? (
             <>
@@ -182,7 +182,7 @@ export function ScannerPanel({ scanner, audio, catalog, region, events, transcri
           <button className="primary" disabled={scanner.busy} onClick={doStart}>Start</button>
         )}
         <button onClick={() => setExpanded(!expanded)} title={expanded ? "Collapse" : "Expand"}>{expanded ? "▾" : "▴"}</button>
-        <button onClick={onClose} title="Hide the scanner strip (a running scanner keeps running)">×</button>
+        <button onClick={onClose} title="Hide this strip (Listen live keeps running)">×</button>
       </div>
       {err && <div className="decerr">{err}</div>}
       {!audio.on && (
@@ -192,6 +192,10 @@ export function ScannerPanel({ scanner, audio, catalog, region, events, transcri
       )}
       {expanded && (
         <div className="scn-body">
+          <p className="dim scn-intro">
+            Watches a band and plays each transmission as it happens. Runs until you stop it. For a one-off report of what your antenna can
+            receive, use Explore → Discover.
+          </p>
           <div className="scn-form">
             <label>
               <span className="label">band</span>
@@ -236,7 +240,7 @@ export function ScannerPanel({ scanner, audio, catalog, region, events, transcri
                 ))}
               </div>
             </details>
-            <span className="dim">{running ? "scanner controls the radio" : "Starting stops a running decoder."}</span>
+            <span className="dim">{running ? "Listen live controls the radio" : "Starting stops a running decoder."}</span>
           </div>
           <div className="scn-cols">
             <div className="scn-col">

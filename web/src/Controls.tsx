@@ -38,10 +38,12 @@ export function Controls(props: {
   step: number;
   setStep: (hz: number) => void;
   children?: ReactNode;
-  /** scanner owns the radio: tuning inputs disabled */
+  /** a scanner/survey/pass owns the radio: tuning inputs disabled */
   locked?: boolean;
+  /** why the controls are locked, e.g. "Listen live controls the radio" */
+  lockNote?: string;
 }) {
-  const { status, centerHz, tuner, step, setStep, children, locked = false } = props;
+  const { status, centerHz, tuner, step, setStep, children, locked = false, lockNote = "Listen live controls the radio" } = props;
   const [text, setText] = useState("");
   const [focused, setFocused] = useState(false);
   const [bad, setBad] = useState<string | null>(null);
@@ -128,7 +130,7 @@ export function Controls(props: {
           ))}
         </select>
       </span>
-      {locked && <span className="warn-inline">scanner controls the radio</span>}
+      {locked && <span className="warn-inline">{lockNote}</span>}
       {children}
       {tuner.error && <span className="err">{tuner.error}</span>}
     </div>

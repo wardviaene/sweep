@@ -56,18 +56,20 @@ interface Props {
   receiver: Receiver | null;
   registerCenter: RegisterCenter;
   onOpenSettings: () => void;
-  /** survey summary line ("Last survey: 4 of 11 found data") or null */
+  /** survey summary line ("Last Discover: 4 of 11 found data") or null */
   surveyLine: string | null;
   onOpenSurvey: () => void;
   /** set by the survey to select a decoder view and expand the panel; seq makes repeats distinct */
   focus: { decoder: DecoderName; seq: number } | null;
+  /** bump to switch to the satellites tab and expand the panel */
+  satSeq?: number;
   /** tune to hz and demodulate NFM (satellite downlinks) */
   onListen: (hz: number) => void;
   audio: AudioApi;
   transcripts: Transcript[];
 }
 
-export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, meterIds, receiver, registerCenter, onOpenSettings, surveyLine, onOpenSurvey, focus, onListen, audio, transcripts }: Props) {
+export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, meterIds, receiver, registerCenter, onOpenSettings, surveyLine, onOpenSurvey, focus, satSeq = 0, onListen, audio, transcripts }: Props) {
   const [open, setOpen] = useState(true);
   const [expanded, setExpanded] = useState(loadExpanded);
   const [tab, setTab] = useState<"view" | "raw">("view");
@@ -114,6 +116,12 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
     setTab("view");
     setOpen(true);
   }, [focus?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!satSeq) return;
+    setSection("satellites");
+    setOpen(true);
+  }, [satSeq]);
 
   useEffect(() => setFreqText(null), [pick]);
   const hasFreq = HAS_FREQ.has(pick);
@@ -214,7 +222,7 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
         </span>
         {error && <span className="err">{error}</span>}
         {surveyLine && (
-          <button className="linkbtn" onClick={onOpenSurvey} title="Open the survey">{surveyLine}</button>
+          <button className="linkbtn" onClick={onOpenSurvey} title="Open the Discover report">{surveyLine}</button>
         )}
       </div>
       {open && section === "satellites" && (
@@ -253,7 +261,7 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
           {noData && (
             <div className="dim pad">
               Not sure what to listen to?{" "}
-              <button className="linkbtn" onClick={onOpenSurvey}>Run 'What's on the air?'</button>
+              <button className="linkbtn" onClick={onOpenSurvey}>Explore → Discover</button>
             </div>
           )}
           {showView && (

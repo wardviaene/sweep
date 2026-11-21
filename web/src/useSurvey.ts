@@ -11,7 +11,7 @@ export interface SurveyApi {
   stop: () => void;
 }
 
-/** Fetches the survey state when `active` (panel open), then polls every 1 s while it is running. */
+/** Fetches the survey state when `active` (panel open), then polls every 1 s while it is running and every 2 s otherwise (cheap; lets the radio pill notice a survey). */
 export function useSurvey(active: boolean): SurveyApi {
   const [survey, setSurvey] = useState<Survey | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -32,17 +32,16 @@ export function useSurvey(active: boolean): SurveyApi {
     return () => ac.abort();
   }, [active]);
 
-  const polling = active && running;
   const inflight = useRef(false);
   useEffect(() => {
-    if (!polling) return;
     const ac = new AbortController();
     const id = window.setInterval(() => {
       if (inflight.current) return;
       inflight.current = true;
       getSurvey(ac.signal)
         .then((s) => {
-          setSurvey(s);
+          // idle and unchanged: keep the same object so subscribers do not re-render
+          setSurvey((prev) => (prev && s.state !== "running" && prev.state === s.state && prev.id === s.id ? prev : s));
           setError(null);
         })
         .catch((e: unknown) => {
@@ -51,13 +50,13 @@ export function useSurvey(active: boolean): SurveyApi {
         .finally(() => {
           inflight.current = false;
         });
-    }, 1000);
+    }, running ? 1000 : 2000);
     return () => {
       ac.abort();
       window.clearInterval(id);
       inflight.current = false;
     };
-  }, [polling]);
+  }, [running]);
 
   const start = useCallback(async (p: SurveyParams) => {
     setBusy(true);
