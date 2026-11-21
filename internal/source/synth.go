@@ -86,7 +86,16 @@ func (s *Synth) Read(p []byte) (int, error) {
 			if g == 0 || math.Abs(off) >= s.sampleRate/2 {
 				continue
 			}
-			b.phase += 2 * math.Pi * off / s.sampleRate
+			dev := 0.0
+			if len(b.audio) > 0 {
+				if i := int((b.pos - b.offS) * b.rate); i >= 0 && i < len(b.audio) {
+					dev = 3000 * b.audio[i]
+				}
+			} else if b.modHz > 0 {
+				b.modPh += 2 * math.Pi * b.modHz / s.sampleRate
+				dev = 3000 * math.Sin(b.modPh)
+			}
+			b.phase += 2 * math.Pi * (off + dev) / s.sampleRate
 			re += g * b.amp * math.Cos(b.phase)
 			im += g * b.amp * math.Sin(b.phase)
 		}
@@ -113,6 +122,7 @@ func (s *Synth) Read(p []byte) (int, error) {
 	}
 	for _, b := range s.bursts {
 		b.phase = math.Mod(b.phase, 2*math.Pi)
+		b.modPh = math.Mod(b.modPh, 2*math.Pi)
 	}
 	s.emitted += int64(n / 2)
 	return n, nil
@@ -200,6 +210,10 @@ type burst struct {
 	freqHz, amp float64
 	onS, offS   float64
 	phase       float64
+	modHz       float64 // FM tone (+-3 kHz deviation) on the carrier; 0 = unmodulated
+	modPh       float64
+	audio       []float64 // speech FM-modulated from the start of each transmission (rate Hz); overrides modHz
+	rate        float64
 	pos         float64 // seconds into the cycle
 }
 
@@ -231,5 +245,25 @@ func (b *burst) gain(sampleRate float64) float64 {
 func (s *Synth) AddBurst(freqHz, onS, offS, amp float64) {
 	s.mu.Lock()
 	s.bursts = append(s.bursts, &burst{freqHz: freqHz, amp: amp, onS: onS, offS: offS})
+	s.mu.Unlock()
+}
+
+// AddToneBurst is AddBurst with a modHz audio tone FM-modulated on the carrier
+// (+-3 kHz deviation), so the burst produces audio.
+func (s *Synth) AddToneBurst(freqHz, onS, offS, amp, modHz float64) {
+	s.mu.Lock()
+	s.bursts = append(s.bursts, &burst{freqHz: freqHz, amp: amp, onS: onS, offS: offS, modHz: modHz})
+	s.mu.Unlock()
+}
+
+// AddSpeechBurst is AddBurst with 16-bit mono PCM (at rate Hz) FM-modulated
+// (+-3 kHz) from the start of every transmission.
+func (s *Synth) AddSpeechBurst(freqHz, onS, offS, amp float64, pcm []int16, rate float64) {
+	a := make([]float64, len(pcm))
+	for i, v := range pcm {
+		a[i] = float64(v) / 32768
+	}
+	s.mu.Lock()
+	s.bursts = append(s.bursts, &burst{freqHz: freqHz, amp: amp, onS: onS, offS: offS, audio: a, rate: rate})
 	s.mu.Unlock()
 }

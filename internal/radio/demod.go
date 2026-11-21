@@ -143,6 +143,9 @@ func (r *Radio) processLocked(b []byte) {
 	if len(b) == 0 {
 		return
 	}
+	if r.ring != nil {
+		r.ring.write(b, time.Now())
+	}
 	if r.demod != nil {
 		r.audioBuf = r.demod.Process(b, r.audioBuf[:0])
 		lv := r.demod.Level()
@@ -168,14 +171,15 @@ func (r *Radio) processLocked(b []byte) {
 
 // tap is a decoder's view of the IQ stream: raw IQ, or audio from its own demod.
 type tap struct {
-	iq     chan []byte  // raw cu8 IQ copies
-	pcm    chan []int16 // audio from demod
-	demod  *dsp.Demod
-	freqHz uint32
-	mode   dsp.Mode
-	bw     float64
-	raw    bool
-	drops  int
+	iq      chan []byte  // raw cu8 IQ copies
+	pcm     chan []int16 // audio from demod
+	demod   *dsp.Demod
+	freqHz  uint32
+	mode    dsp.Mode
+	bw      float64
+	raw     bool
+	drops   int
+	history bool // IQ history live tap: closed on retune
 }
 
 func (t *tap) rebuild(r *Radio) {

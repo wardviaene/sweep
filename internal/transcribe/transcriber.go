@@ -31,6 +31,9 @@ type Options struct {
 	Config  *config.Store
 	Events  *decoder.Events
 	Tee     *Tee
+	// IQ is the radio's IQ history: scanner clips are demodulated from it, from
+	// before the lock; optional (without it clips come from the Tee).
+	IQ IQSource
 	// VFO reports the listening VFO (frequency, mode) for manual recordings; optional.
 	VFO func() (freqHz uint32, mode string)
 	// ServerURL replaces the whisper-server child process (tests).
@@ -81,6 +84,7 @@ type Transcriber struct {
 	queue    []*job
 	busy     bool
 	lastErr  string
+	scanning bool  // a scanner runs: keep the IQ history
 	override *bool // SetEnabled, takes precedence over the config and flag
 	wake     chan struct{}
 	stopped  chan struct{} // closed when Run has returned
@@ -142,8 +146,15 @@ func (t *Transcriber) Enabled() bool {
 }
 
 func (t *Transcriber) syncTee() {
+	en := t.Enabled()
 	if t.o.Tee != nil {
-		t.o.Tee.SetEnabled(t.Enabled())
+		t.o.Tee.SetEnabled(en)
+	}
+	if t.o.IQ != nil {
+		t.mu.Lock()
+		sc := t.scanning
+		t.mu.Unlock()
+		t.o.IQ.SetIQRing(en && sc)
 	}
 }
 
@@ -243,7 +254,45 @@ func (t *Transcriber) dropQueue(why string) {
 // function ends the capture at the given time (so hang time is excluded) and
 // queues the clip. It is nil when transcription is off or the VFO is off.
 func (t *Transcriber) Begin(source string, freqHz uint32, label, mode string, start time.Time) func(end time.Time) {
-	if t == nil || t.o.Tee == nil || !t.Enabled() {
+	return t.begin(source, freqHz, label, mode, 0, start, false)
+}
+
+// SetScanning tells the transcriber a scanner is running, which keeps the radio's
+// IQ history on (while transcription is enabled) so clips start before the lock.
+func (t *Transcriber) SetScanning(on bool) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.scanning = on
+	t.mu.Unlock()
+	t.syncTee()
+}
+
+// BeginIQ is Begin for a transmission that started at start, before the VFO was
+// on it: with the IQ history on, the clip is demodulated from the buffered IQ
+// (mode, bandwidth bw, 0 = default) from 0.3 s before start. Without it the clip
+// is the VFO audio from now on.
+func (t *Transcriber) BeginIQ(source string, freqHz uint32, label, mode string, bw float64, start time.Time) func(end time.Time) {
+	return t.begin(source, freqHz, label, mode, bw, start, true)
+}
+
+func (t *Transcriber) begin(source string, freqHz uint32, label, mode string, bw float64, start time.Time, useIQ bool) func(end time.Time) {
+	if t == nil || !t.Enabled() {
+		return nil
+	}
+	if useIQ && t.o.IQ != nil {
+		if c := beginIQ(t.o.IQ, freqHz, mode, bw, start); c != nil {
+			return func(end time.Time) {
+				pcm, rate, ok := c.End(end)
+				if !ok {
+					return
+				}
+				t.Submit(Clip{Source: source, FreqHz: freqHz, Label: label, Mode: mode, Start: start, PCM: pcm, Rate: float64(rate)})
+			}
+		}
+	}
+	if t.o.Tee == nil {
 		return nil
 	}
 	c := t.o.Tee.Begin()
@@ -403,6 +452,16 @@ func (t *Transcriber) wait(ctx context.Context, ch <-chan Result) (Result, error
 		return r, r.Err
 	case <-ctx.Done():
 		return Result{}, ctx.Err()
+	}
+}
+
+// ClipIQFunc adapts BeginIQ for the scanner. A nil Transcriber gives a nil func.
+func (t *Transcriber) ClipIQFunc(source string) func(freqHz uint32, label, mode string, bw float64, start time.Time) func(end time.Time) {
+	if t == nil {
+		return nil
+	}
+	return func(freqHz uint32, label, mode string, bw float64, start time.Time) func(time.Time) {
+		return t.BeginIQ(source, freqHz, label, mode, bw, start)
 	}
 }
 

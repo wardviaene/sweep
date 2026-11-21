@@ -9,3 +9,16 @@
 /config.json
 /sweep-config.json
 *.local.json
+
+# raw radio data and recordings: never commit (privacy + size)
+*.cu8
+*.cs8
+*.cs16
+*.cf32
+*.iq
+*.wav
+*.aiff
+*.flac
+/clips/
+/passes/
+/sstv/

@@ -30,7 +30,7 @@ func addTranscribeFlags() transcribeFlags {
 func startTranscribe(ctx context.Context, f transcribeFlags, tee *transcribe.Tee, store *config.Store, events *decoder.Events, r *radio.Radio) *transcribe.Transcriber {
 	dir := dataDirPath()
 	tx, err := transcribe.New(transcribe.Options{Dir: filepath.Join(dir, "clips"), DataDir: dir, Model: *f.model, Bin: *f.bin,
-		Mode: *f.mode, Config: store, Events: events, Tee: tee,
+		Mode: *f.mode, Config: store, Events: events, Tee: tee, IQ: r,
 		VFO: func() (uint32, string) { d := r.Status().Demod; return d.FreqHz, d.Mode }})
 	if err != nil {
 		log.Printf("transcribe: disabled: %v", err)

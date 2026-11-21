@@ -170,7 +170,7 @@ func main() {
 	decoders.Meta = db
 	tx := startTranscribe(ctx, tflags, tee, store, events, r)
 	defer tx.Close()
-	sc := scanner.New(scanner.Deps{Radio: r, Decoders: decoders, Config: store, Label: db.Label, Clip: tx.ClipFunc("scanner")})
+	sc := scanner.New(scanner.Deps{Radio: r, Decoders: decoders, Config: store, Label: db.Label, Clip: tx.ClipFunc("scanner"), ClipIQ: tx.ClipIQFunc("scanner"), Buffering: tx.SetScanning})
 	defer sc.Stop()
 	sv := survey.New(survey.Deps{Radio: r, Spectrum: hub, Decoders: decoders, Config: store, Label: db.Label, Clip: tx.ClipFunc("survey")})
 	ap := autopilot.New(autopilot.Deps{Radio: r, Decoders: decoders, Source: db, Config: store, DataDir: dataDirPath(),

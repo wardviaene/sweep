@@ -139,6 +139,13 @@ type Deps struct {
 	// Clip starts recording the VFO audio of a transmission for transcription;
 	// the returned function ends it at the given time. Optional (may return nil).
 	Clip func(freqHz uint32, label, mode string, start time.Time) func(end time.Time)
+	// ClipIQ is Clip for a transmission that began before the VFO was pointed at
+	// it: start is the back-dated start and bw the channel bandwidth, so the clip
+	// can be demodulated from the radio's buffered IQ. It takes precedence over Clip.
+	ClipIQ func(freqHz uint32, label, mode string, bw float64, start time.Time) func(end time.Time)
+	// Buffering is called with true while the scanner runs and false after, so
+	// the IQ history is only kept then. Optional.
+	Buffering func(on bool)
 }
 
 // Scanner owns at most one scanner run at a time.

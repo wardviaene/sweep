@@ -67,6 +67,9 @@ type SynthBurst struct {
 	OnS    float64
 	OffS   float64
 	Amp    float64 // linear, full scale = 1; 0 = 0.05
+	PCM    []int16 // speech FM-modulated from the start of each transmission, at Rate Hz (overrides ModHz)
+	Rate   float64
+	ModHz  float64 // audio tone FM-modulated on the carrier (+-3 kHz); 0 = plain carrier
 }
 
 // SpecFrame is one full-resolution spectrum frame (dB per bin, lowest frequency
@@ -164,6 +167,7 @@ type Radio struct {
 	specSub map[int]chan SpecFrame // SubscribeSpectrum consumers
 	nextSub int
 
+	ring      *iqRing    // raw IQ history, nil when off (SetIQRing)
 	demod     *dsp.Demod // listening VFO, nil when off
 	dm        DemodInfo
 	audioBuf  []int16
@@ -290,6 +294,7 @@ func (r *Radio) Tune(req TuneRequest) (Status, error) {
 		r.st.SampleRate = *req.SampleRate
 	}
 	r.retuneDemodLocked(req.SampleRate != nil)
+	r.retuneRingLocked()
 	if req.SetGain {
 		r.st.GainDB = req.GainDB
 	}
@@ -365,7 +370,11 @@ func (r *Radio) runOnce(ctx context.Context) error {
 			if amp == 0 {
 				amp = 0.05
 			}
-			syn.AddBurst(b.FreqHz, b.OnS, b.OffS, amp)
+			if len(b.PCM) > 0 {
+				syn.AddSpeechBurst(b.FreqHz, b.OnS, b.OffS, amp, b.PCM, b.Rate)
+			} else {
+				syn.AddToneBurst(b.FreqHz, b.OnS, b.OffS, amp, b.ModHz)
+			}
 		}
 		for _, f := range r.cfg.SynthFM {
 			syn.AddFM(f.FreqHz, f.PCM, f.Rate, 3000, 2)

@@ -661,7 +661,7 @@ sdrd can turn voice transmissions into text with [whisper.cpp](https://github.co
 | `-whisper-bin` | `whisper-server` | Server binary |
 
 **What is transcribed.**
-- Every transmission the **scanner** locks onto. Clip capture starts when the scanner locks and includes the 0.3 s before it, up to the end of the transmission without the hang time. **Known limitation:** the lock happens after the carrier is detected, so the first words of a transmission can be missed.
+- Every transmission the **scanner** locks onto. The clip starts 0.3 s before the transmission's (back-dated) start and runs to its end without the hang time. The audio before the lock comes from about 2 s of buffered raw IQ (kept only while the scanner runs with transcription on, dropped on a retune, so a transmission right after a window change has less pre-roll), demodulated with the scanner's mode and bandwidth, so the first words are no longer cut off.
 - **Survey listen holds** (`listened` steps).
 - On request through `POST /api/transcribe`.
 

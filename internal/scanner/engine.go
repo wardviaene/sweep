@@ -62,6 +62,10 @@ type engine struct {
 // loop runs until ctx ends. It does not restore the radio.
 func (s *Scanner) loop(ctx context.Context, p params, done chan struct{}) {
 	defer close(done)
+	if b := s.d.Buffering; b != nil {
+		b(true)
+		defer b(false)
+	}
 	frames, cancel := s.d.Radio.SubscribeSpectrum()
 	defer cancel()
 	e := &engine{s: s, p: p, ctx: ctx, sr: float64(s.d.Radio.Status().SampleRate)}
@@ -365,7 +369,9 @@ func (e *engine) lock(w *win, c cand, db []float64, start, binHz float64, t time
 		since = t
 	}
 	e.h = &hold{ch: ch, f0: c.f0, start: since, lastAct: t, peak: c.v, label: label, priority: c.prio, b0: b0, b1: b1}
-	if e.s.d.Clip != nil {
+	if e.s.d.ClipIQ != nil {
+		e.h.endClip = e.s.d.ClipIQ(ch, label, mode, bw, since)
+	} else if e.s.d.Clip != nil {
 		e.h.endClip = e.s.d.Clip(ch, label, mode, since)
 	}
 	for i := b0; i <= b1; i++ {
