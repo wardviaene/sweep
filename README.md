@@ -17,6 +17,21 @@ make dev                                                   # sdrd + Vite; open h
 
 No dongle? `make dev-synth` runs everything against a synthetic IQ source.
 
+## Decoded data
+
+The decoder panel (expand it with ⤢) has a view per decoder:
+
+- **Aircraft (ADS-B)**: map with altitude-coloured, track-rotated aircraft, trails, and a table with altitude, speed, track and climb/descent. Once a receiver location is set it adds range rings and range/bearing.
+- **APRS**: stations on the map with their tracks, plus the packet list.
+- **AIS**: vessels on the map plus a table, with names and callsigns merged from static messages.
+- **Sensors (rtl_433)**: one card per device with the latest readings and temperature/humidity sparklines.
+
+Maps use OpenStreetMap tiles. Your browser fetches them from tile.openstreetmap.org, so OSM can see which area you view. sdrd itself makes no external calls.
+
+**Receiver location.** Set it with the gear icon or `sdrctl location <lat> <lon>`. sdrd stores it in `~/.config/sweep/config.json` (mode 0600), outside the repository, and `.gitignore` blocks local config files. Don't put a real location in the repo, docs or tests.
+
+Scan and IQ recording are under **Tools** in the control bar.
+
 ## Layout
 
 ```
