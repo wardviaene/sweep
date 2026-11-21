@@ -4,7 +4,7 @@ import { esc, L, MapBox, SortTable, useFit, type Col, type RegisterCenter } from
 
 const time = (ts: number) => new Date(ts * 1000).toLocaleTimeString([], { hour12: false });
 
-export function AprsView(props: { view: View; registerCenter: RegisterCenter }) {
+export function AprsView(props: { view: View; registerCenter: RegisterCenter; title?: string; info?: string }) {
   const { view } = props;
   const [map, setMap] = useState<L.Map | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -80,14 +80,18 @@ export function AprsView(props: { view: View; registerCenter: RegisterCenter }) 
         <div className="maptools"><button className="mini" onClick={fit}>fit</button></div>
       </MapBox>
       <div className="side">
-        <div className="dim pad">{view.stations.length} stations, {withPos} with position</div>
+        <div className="dim pad">
+          {props.title && <b style={{ color: "var(--text)" }}>{props.title}</b>}
+          {props.info && <> · {props.info}</>}
+          {props.title && " · "}{view.stations.length} stations, {withPos} with position
+        </div>
         <SortTable
           rows={view.packets}
           cols={cols}
           rowKey={(r) => String(r.id)}
           defaultSort="time"
           defaultDir={-1}
-          empty="no APRS packets yet"
+          empty={`no ${props.title ? "packets" : "APRS packets"} yet`}
           onClick={(r) => pan(r.from)}
           rowClass={(r) => (r.from === selected ? "sel" : "")}
           limit={300}

@@ -66,6 +66,8 @@ export function AircraftView(props: {
   receiver: Receiver | null;
   registerCenter: RegisterCenter;
   onOpenSettings: () => void;
+  /** label of the data source, e.g. "ADS-B" or "UAT" */
+  source?: string;
 }) {
   const { view, receiver } = props;
   const [map, setMap] = useState<L.Map | null>(null);
@@ -228,14 +230,14 @@ export function AircraftView(props: {
         )}
       </MapBox>
       <div className="side">
-        <div className="dim pad">{view.aircraft.length} aircraft, {view.withPos} with position</div>
+        <div className="dim pad">{props.source ?? "ADS-B"}: {view.aircraft.length} aircraft, {view.withPos} with position</div>
         <SortTable
           key={receiver ? "rx" : "norx"}
           rows={rows}
           cols={cols}
           rowKey={(r) => r.hex}
           defaultSort={receiver ? "range" : "seen"}
-          empty="no aircraft snapshot yet"
+          empty={`no ${props.source ?? "ADS-B"} aircraft snapshot yet`}
           onClick={pick}
           onHover={(r) => setHover(r ? r.hex : null)}
           rowClass={(r) => (r.hex === selected ? "sel" : r.hex === hover ? "hov" : "")}

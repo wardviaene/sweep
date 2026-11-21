@@ -72,10 +72,10 @@ function apply(m: Model, e: DecEvent): boolean {
   return true;
 }
 
-export function useAprs(events: DecEvent[]): AprsView {
+export function useAprs(events: DecEvent[], decoder: "aprs" | "packet" = "aprs"): AprsView {
   return useIncremental<Model, AprsView>(
     events,
-    "aprs",
+    decoder,
     () => ({ st: new Map(), pk: [] }),
     apply,
     (m) => ({

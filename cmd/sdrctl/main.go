@@ -87,6 +87,15 @@ func init() {
 }
 
 func init() {
+	commands["meters"] = command{"meters [id ...|clear]   (your own utility meter IDs; others stay hidden)", func(a []string) error {
+		switch {
+		case len(a) == 0:
+			return get("/api/config", nil)
+		case len(a) == 1 && a[0] == "clear":
+			return put("/api/config", map[string]any{"meter_ids": []string{}})
+		}
+		return put("/api/config", map[string]any{"meter_ids": a})
+	}}
 	commands["listen"] = command{"listen <freq> [-mode nfm|am|usb|lsb] [-bw 12.5k] [-squelch dB|off]", cmdListen}
 	commands["demod"] = command{"demod <off|nfm|am|usb|lsb>", func(a []string) error {
 		if len(a) != 1 {
@@ -94,16 +103,26 @@ func init() {
 		}
 		return post("/api/demod", map[string]any{"mode": a[0]})
 	}}
-	commands["decoder"] = command{"decoder <rtl_433|adsb|aprs|ais|none> [-region us|eu]", func(a []string) error {
+	commands["decoder"] = command{"decoder <rtl_433|meters|adsb|aprs|ais|packet|none> [-region us|eu] [-freq 437.8M -baud 9600]", func(a []string) error {
 		if len(a) < 1 || strings.HasPrefix(a[0], "-") {
 			return usageErr("decoder")
 		}
 		fs := flag.NewFlagSet("decoder", flag.ContinueOnError)
 		region := fs.String("region", "us", "us or eu (APRS frequency)")
+		freq := fs.String("freq", "", "packet: channel frequency, e.g. 437.8M")
+		baud := fs.Int("baud", 1200, "packet: 1200 or 9600")
 		if err := fs.Parse(a[1:]); err != nil {
 			return err
 		}
-		return post("/api/decoder", map[string]any{"decoder": a[0], "region": *region})
+		body := map[string]any{"decoder": a[0], "region": *region, "baud": *baud}
+		if *freq != "" {
+			f, err := ParseFreq(*freq)
+			if err != nil {
+				return err
+			}
+			body["freq_hz"] = f
+		}
+		return post("/api/decoder", body)
 	}}
 	commands["events"] = command{"events [-since 0] [-limit 50] [-decoder name]", cmdEvents}
 	commands["bands"] = command{"bands [-region us|eu]", cmdBands}

@@ -17,306 +17,697 @@
     {
       "id": "hf",
       "name": "HF amateur",
-      "regions": ["us", "eu"],
-      "lo_mhz": 1.8, "hi_mhz": 29.7,
-      "edges": {"eu": [1.81, 29.7]},
+      "regions": [
+        "us",
+        "eu"
+      ],
+      "lo_mhz": 1.8,
+      "hi_mhz": 29.7,
+      "edges": {
+        "eu": [
+          1.81,
+          29.7
+        ]
+      },
       "tune_mhz": 14.074,
       "hf": true,
       "mode": "usb",
       "decoder": null,
       "on_air": "Worldwide amateur SSB voice, CW and digital modes (FT8, WSPR, JS8). Range depends on time of day and the solar cycle.",
-      "decode_with": ["WSJT-X (FT8/WSPR)", "fldigi", "JS8Call", "SSB demod"],
+      "decode_with": [
+        "WSJT-X (FT8/WSPR)",
+        "fldigi",
+        "JS8Call",
+        "SSB demod"
+      ],
       "antenna": "Long wire or random wire (10 m+) with a 9:1 unun, or a magnetic loop. The 400 MHz-1 GHz log-periodic will not work here.",
       "tx_license": "Amateur General (US) / Full (EU) license",
       "starter": "rtl_tcp -D 2, then tune 14.074 MHz USB and feed audio to WSJT-X",
       "channels": [
-        {"mhz": 3.573, "name": "FT8 80 m", "mode": "usb"},
-        {"mhz": 7.074, "name": "FT8 40 m", "mode": "usb"},
-        {"mhz": 10.136, "name": "FT8 30 m", "mode": "usb"},
-        {"mhz": 14.074, "name": "FT8 20 m", "mode": "usb"},
-        {"mhz": 21.074, "name": "FT8 15 m", "mode": "usb"},
-        {"mhz": 28.074, "name": "FT8 10 m", "mode": "usb"},
-        {"mhz": 10.0, "name": "WWV time signal", "mode": "am", "regions": ["us"]},
-        {"mhz": 15.0, "name": "WWV time signal", "mode": "am", "regions": ["us"]}
+        {
+          "mhz": 3.573,
+          "name": "FT8 80 m",
+          "mode": "usb"
+        },
+        {
+          "mhz": 7.074,
+          "name": "FT8 40 m",
+          "mode": "usb"
+        },
+        {
+          "mhz": 10.136,
+          "name": "FT8 30 m",
+          "mode": "usb"
+        },
+        {
+          "mhz": 14.074,
+          "name": "FT8 20 m",
+          "mode": "usb"
+        },
+        {
+          "mhz": 21.074,
+          "name": "FT8 15 m",
+          "mode": "usb"
+        },
+        {
+          "mhz": 28.074,
+          "name": "FT8 10 m",
+          "mode": "usb"
+        },
+        {
+          "mhz": 10.0,
+          "name": "WWV time signal",
+          "mode": "am",
+          "regions": [
+            "us"
+          ]
+        },
+        {
+          "mhz": 15.0,
+          "name": "WWV time signal",
+          "mode": "am",
+          "regions": [
+            "us"
+          ]
+        }
       ]
     },
     {
       "id": "6m",
       "name": "6 m amateur",
-      "regions": ["us", "eu"],
-      "lo_mhz": 50, "hi_mhz": 54,
-      "edges": {"eu": [50, 52]},
+      "regions": [
+        "us",
+        "eu"
+      ],
+      "lo_mhz": 50,
+      "hi_mhz": 54,
+      "edges": {
+        "eu": [
+          50,
+          52
+        ]
+      },
       "tune_mhz": 50.313,
       "hf": false,
       "mode": "usb",
       "decoder": null,
       "on_air": "The 'magic band': sporadic-E openings in summer, FT8, SSB and beacons.",
-      "decode_with": ["WSJT-X (FT8)", "SSB demod"],
+      "decode_with": [
+        "WSJT-X (FT8)",
+        "SSB demod"
+      ],
       "antenna": "6 m dipole or vertical (about 1.45 m per dipole leg)",
       "tx_license": "Amateur Technician (US) / amateur license (EU)",
       "starter": "rtl_fm -f 50.313M -M usb -s 12k | play -r 12k -t raw -e s -b 16 -c 1 -V1 -",
       "channels": [
-        {"mhz": 50.313, "name": "FT8", "mode": "usb"},
-        {"mhz": 50.125, "name": "SSB calling", "mode": "usb", "regions": ["us"]},
-        {"mhz": 50.150, "name": "SSB calling", "mode": "usb", "regions": ["eu"]}
+        {
+          "mhz": 50.313,
+          "name": "FT8",
+          "mode": "usb"
+        },
+        {
+          "mhz": 50.125,
+          "name": "SSB calling",
+          "mode": "usb",
+          "regions": [
+            "us"
+          ]
+        },
+        {
+          "mhz": 50.15,
+          "name": "SSB calling",
+          "mode": "usb",
+          "regions": [
+            "eu"
+          ]
+        }
       ]
     },
     {
       "id": "air",
       "name": "Aviation VHF",
-      "regions": ["us", "eu"],
-      "lo_mhz": 118, "hi_mhz": 137,
+      "regions": [
+        "us",
+        "eu"
+      ],
+      "lo_mhz": 118,
+      "hi_mhz": 137,
       "tune_mhz": 121.5,
       "hf": false,
       "mode": "am",
       "decoder": null,
       "on_air": "Air traffic control, ATIS, tower and approach. AM voice, 25 kHz (8.33 kHz channel spacing in Europe).",
-      "decode_with": ["AM demod"],
+      "decode_with": [
+        "AM demod"
+      ],
       "antenna": "Airband vertical or 1/4 wave (about 58 cm)",
       "tx_license": "Aircraft / aeronautical station license only",
       "starter": "rtl_fm -f 121.5M -M am -s 12k | play -r 12k -t raw -e s -b 16 -c 1 -V1 -",
       "channels": [
-        {"mhz": 121.5, "name": "Emergency / guard", "mode": "am"},
-        {"mhz": 123.45, "name": "Air-to-air (unofficial)", "mode": "am"}
+        {
+          "mhz": 121.5,
+          "name": "Emergency / guard",
+          "mode": "am"
+        },
+        {
+          "mhz": 123.45,
+          "name": "Air-to-air (unofficial)",
+          "mode": "am"
+        }
       ]
     },
     {
       "id": "wxsat",
       "name": "Weather satellites",
-      "regions": ["us", "eu"],
-      "lo_mhz": 137, "hi_mhz": 138,
+      "regions": [
+        "us",
+        "eu"
+      ],
+      "lo_mhz": 137,
+      "hi_mhz": 138,
       "tune_mhz": 137.5,
       "hf": false,
       "mode": "none",
       "decoder": null,
       "on_air": "Meteor-M LRPT digital imagery (QPSK, 72 kS/s) during overhead passes. The NOAA-15/18/19 APT satellites were retired in 2025.",
-      "decode_with": ["SatDump (record IQ during a pass, then decode)"],
+      "decode_with": [
+        "SatDump (record IQ during a pass, then decode)"
+      ],
       "antenna": "V-dipole (53 cm legs, 120 deg) or QFH. Passes last about 10-15 minutes.",
       "tx_license": "Receive only",
       "starter": "rtl_sdr -f 137.9M -s 1.024M -n 1024000000 pass.cu8, then open it in SatDump",
       "channels": [
-        {"mhz": 137.1, "name": "Meteor-M LRPT", "mode": "none"},
-        {"mhz": 137.9, "name": "Meteor-M LRPT", "mode": "none"}
+        {
+          "mhz": 137.1,
+          "name": "Meteor-M LRPT",
+          "mode": "none"
+        },
+        {
+          "mhz": 137.9,
+          "name": "Meteor-M LRPT",
+          "mode": "none"
+        }
       ]
     },
     {
       "id": "2m",
       "name": "2 m amateur",
-      "regions": ["us", "eu"],
-      "lo_mhz": 144, "hi_mhz": 148,
-      "edges": {"eu": [144, 146]},
+      "regions": [
+        "us",
+        "eu"
+      ],
+      "lo_mhz": 144,
+      "hi_mhz": 148,
+      "edges": {
+        "eu": [
+          144,
+          146
+        ]
+      },
       "tune_mhz": 146.0,
       "hf": false,
       "mode": "nfm",
       "decoder": "aprs",
       "on_air": "FM repeaters and simplex, APRS packet, SSB/CW at the bottom, ISS downlink.",
-      "decode_with": ["NFM demod", "direwolf (APRS)"],
+      "decode_with": [
+        "NFM demod",
+        "direwolf (APRS)"
+      ],
       "antenna": "2 m vertical, J-pole or 1/4 wave (about 49 cm)",
       "tx_license": "Amateur Technician (US) / amateur license (EU)",
       "starter": "rtl_fm -f 144.39M -M fm -s 22050 | direwolf -r 22050 -n 1 -b 16 -",
       "channels": [
-        {"mhz": 144.39, "name": "APRS", "mode": "nfm", "regions": ["us"], "decoder": "aprs"},
-        {"mhz": 144.8, "name": "APRS", "mode": "nfm", "regions": ["eu"], "decoder": "aprs"},
-        {"mhz": 146.52, "name": "FM simplex calling", "mode": "nfm", "regions": ["us"]},
-        {"mhz": 145.5, "name": "FM simplex calling", "mode": "nfm", "regions": ["eu"]},
-        {"mhz": 145.8, "name": "ISS voice / SSTV downlink", "mode": "nfm"},
-        {"mhz": 145.825, "name": "ISS APRS digipeater", "mode": "nfm", "decoder": "aprs"}
+        {
+          "mhz": 144.39,
+          "name": "APRS",
+          "mode": "nfm",
+          "regions": [
+            "us"
+          ],
+          "decoder": "aprs"
+        },
+        {
+          "mhz": 144.8,
+          "name": "APRS",
+          "mode": "nfm",
+          "regions": [
+            "eu"
+          ],
+          "decoder": "aprs"
+        },
+        {
+          "mhz": 146.52,
+          "name": "FM simplex calling",
+          "mode": "nfm",
+          "regions": [
+            "us"
+          ]
+        },
+        {
+          "mhz": 145.5,
+          "name": "FM simplex calling",
+          "mode": "nfm",
+          "regions": [
+            "eu"
+          ]
+        },
+        {
+          "mhz": 145.8,
+          "name": "ISS voice / SSTV downlink",
+          "mode": "nfm"
+        },
+        {
+          "mhz": 145.825,
+          "name": "ISS APRS digipeater",
+          "mode": "nfm",
+          "decoder": "aprs"
+        }
       ]
     },
     {
       "id": "marine",
       "name": "Marine VHF",
-      "regions": ["us", "eu"],
-      "lo_mhz": 156, "hi_mhz": 162.025,
+      "regions": [
+        "us",
+        "eu"
+      ],
+      "lo_mhz": 156,
+      "hi_mhz": 162.025,
       "tune_mhz": 156.8,
       "hf": false,
       "mode": "nfm",
       "decoder": "ais",
       "on_air": "Ship and coast stations (NFM voice) and AIS vessel position reports (GMSK 9600 baud).",
-      "decode_with": ["NFM demod", "direwolf (AIS)"],
+      "decode_with": [
+        "NFM demod",
+        "direwolf (AIS)"
+      ],
       "antenna": "Marine VHF whip or 1/4 wave (about 46 cm); best near water",
       "tx_license": "Ship station / marine radio operator license",
       "starter": "rtl_fm -f 161.975M -M fm -s 48k | direwolf -r 48000 -B AIS -n 1 -b 16 -",
       "channels": [
-        {"mhz": 156.8, "name": "Ch 16 distress and calling", "mode": "nfm"},
-        {"mhz": 156.45, "name": "Ch 9 calling (US)", "mode": "nfm", "regions": ["us"]},
-        {"mhz": 161.975, "name": "AIS 1", "mode": "nfm", "decoder": "ais"},
-        {"mhz": 162.025, "name": "AIS 2", "mode": "nfm", "decoder": "ais"}
+        {
+          "mhz": 156.8,
+          "name": "Ch 16 distress and calling",
+          "mode": "nfm"
+        },
+        {
+          "mhz": 156.45,
+          "name": "Ch 9 calling (US)",
+          "mode": "nfm",
+          "regions": [
+            "us"
+          ]
+        },
+        {
+          "mhz": 161.975,
+          "name": "AIS 1",
+          "mode": "nfm",
+          "decoder": "ais"
+        },
+        {
+          "mhz": 162.025,
+          "name": "AIS 2",
+          "mode": "nfm",
+          "decoder": "ais"
+        }
       ]
     },
     {
       "id": "noaawx",
       "name": "NOAA Weather Radio",
-      "regions": ["us"],
-      "lo_mhz": 162.4, "hi_mhz": 162.55,
+      "regions": [
+        "us"
+      ],
+      "lo_mhz": 162.4,
+      "hi_mhz": 162.55,
       "tune_mhz": 162.475,
       "hf": false,
       "mode": "nfm",
       "decoder": null,
       "on_air": "Continuous NWS weather broadcasts and SAME alerts on 7 channels.",
-      "decode_with": ["NFM demod"],
+      "decode_with": [
+        "NFM demod"
+      ],
       "antenna": "1/4 wave (about 46 cm) or any VHF whip",
       "tx_license": "Receive only",
       "starter": "rtl_fm -f 162.55M -M fm -s 24k | play -r 24k -t raw -e s -b 16 -c 1 -V1 -",
       "channels": [
-        {"mhz": 162.4, "name": "WX2", "mode": "nfm"},
-        {"mhz": 162.425, "name": "WX4", "mode": "nfm"},
-        {"mhz": 162.45, "name": "WX5", "mode": "nfm"},
-        {"mhz": 162.475, "name": "WX3", "mode": "nfm"},
-        {"mhz": 162.5, "name": "WX6", "mode": "nfm"},
-        {"mhz": 162.525, "name": "WX7", "mode": "nfm"},
-        {"mhz": 162.55, "name": "WX1", "mode": "nfm"}
+        {
+          "mhz": 162.4,
+          "name": "WX2",
+          "mode": "nfm"
+        },
+        {
+          "mhz": 162.425,
+          "name": "WX4",
+          "mode": "nfm"
+        },
+        {
+          "mhz": 162.45,
+          "name": "WX5",
+          "mode": "nfm"
+        },
+        {
+          "mhz": 162.475,
+          "name": "WX3",
+          "mode": "nfm"
+        },
+        {
+          "mhz": 162.5,
+          "name": "WX6",
+          "mode": "nfm"
+        },
+        {
+          "mhz": 162.525,
+          "name": "WX7",
+          "mode": "nfm"
+        },
+        {
+          "mhz": 162.55,
+          "name": "WX1",
+          "mode": "nfm"
+        }
       ]
+    },
+    {
+      "id": "sonde",
+      "name": "Radiosondes (weather balloons)",
+      "regions": [
+        "us",
+        "eu"
+      ],
+      "lo_mhz": 400.0,
+      "hi_mhz": 406.0,
+      "tune_mhz": 403.0,
+      "hf": false,
+      "mode": "nfm",
+      "decoder": "radiosonde",
+      "on_air": "Weather balloons launched twice daily (00 and 12 UTC, plus extra launches) by weather services. Each transmits position, altitude, temperature, humidity and wind for about 2 hours (Vaisala RS41, Graw DFM, Meteomodem M10/M20, Lockheed LMS6-400).",
+      "decode_with": [
+        "rs1729 RS decoders (rs41mod, dfm09mod, m10mod, lms6Xmod)",
+        "radiosonde_auto_rx"
+      ],
+      "antenna": "1/4 wave (about 18 cm) or the 400 MHz-1 GHz log-periodic; height helps, a balloon at 30 km is in line of sight for hundreds of km",
+      "tx_license": "Receive only",
+      "starter": "sdrctl scan 400M 406M -dwell 1000 during a launch window, then listen NFM on the carrier",
+      "channels": []
     },
     {
       "id": "70cm",
       "name": "70 cm amateur",
-      "regions": ["us", "eu"],
-      "lo_mhz": 420, "hi_mhz": 450,
-      "edges": {"eu": [430, 440]},
+      "regions": [
+        "us",
+        "eu"
+      ],
+      "lo_mhz": 420,
+      "hi_mhz": 450,
+      "edges": {
+        "eu": [
+          430,
+          440
+        ]
+      },
       "tune_mhz": 440.0,
       "hf": false,
       "mode": "nfm",
-      "decoder": null,
+      "decoder": "dsd",
       "on_air": "FM and digital voice repeaters (DMR, D-STAR, C4FM), satellites, SSB/CW.",
-      "decode_with": ["NFM demod", "dsd-fme (unencrypted digital voice)"],
+      "decode_with": [
+        "NFM demod",
+        "dsd-fme (DMR, D-STAR, YSF, NXDN; unencrypted amateur only)"
+      ],
       "antenna": "70 cm vertical or 1/4 wave (about 17 cm); the 400 MHz-1 GHz log-periodic works",
       "tx_license": "Amateur Technician (US) / amateur license (EU)",
       "starter": "rtl_fm -f 446.0M -M fm -s 24k | play -r 24k -t raw -e s -b 16 -c 1 -V1 -",
       "channels": [
-        {"mhz": 446.0, "name": "FM simplex calling", "mode": "nfm", "regions": ["us"]},
-        {"mhz": 433.5, "name": "FM simplex calling", "mode": "nfm", "regions": ["eu"]}
+        {
+          "mhz": 446.0,
+          "name": "FM simplex calling",
+          "mode": "nfm",
+          "regions": [
+            "us"
+          ]
+        },
+        {
+          "mhz": 433.5,
+          "name": "FM simplex calling",
+          "mode": "nfm",
+          "regions": [
+            "eu"
+          ]
+        }
       ]
+    },
+    {
+      "id": "sat70",
+      "name": "70 cm amateur satellites",
+      "regions": [
+        "us",
+        "eu"
+      ],
+      "lo_mhz": 435.0,
+      "hi_mhz": 438.0,
+      "tune_mhz": 436.5,
+      "hf": false,
+      "mode": "nfm",
+      "decoder": "packet",
+      "on_air": "Amateur satellite downlinks: FM voice repeaters and AX.25 telemetry beacons (1200 baud AFSK or 9600 baud G3RUH) during passes of about 10 minutes. Expect up to +-10 kHz Doppler shift.",
+      "decode_with": [
+        "NFM demod",
+        "direwolf (packet decoder, 1200/9600 baud)"
+      ],
+      "antenna": "Vertical works for strong passes; a small Yagi tracked by hand is much better",
+      "tx_license": "Amateur license",
+      "starter": "sdrctl decoder packet -freq <downlink> -baud 9600 (look up the satellite's downlink and pass times)",
+      "channels": []
     },
     {
       "id": "ism433",
       "name": "433 MHz ISM",
-      "regions": ["us", "eu"],
-      "lo_mhz": 433.05, "hi_mhz": 434.79,
+      "regions": [
+        "us",
+        "eu"
+      ],
+      "lo_mhz": 433.05,
+      "hi_mhz": 434.79,
       "tune_mhz": 433.92,
       "hf": false,
       "mode": "none",
       "decoder": "rtl_433",
       "on_air": "Weather stations, temperature sensors, tire pressure sensors, doorbells, remotes (short OOK/FSK bursts).",
-      "decode_with": ["rtl_433"],
+      "decode_with": [
+        "rtl_433"
+      ],
       "antenna": "1/4 wave (about 17 cm); the 400 MHz-1 GHz log-periodic works",
       "tx_license": "License-free low-power devices only",
       "starter": "rtl_433 -f 433.92M",
       "channels": [
-        {"mhz": 433.92, "name": "Most sensors", "mode": "none", "decoder": "rtl_433"}
+        {
+          "mhz": 433.92,
+          "name": "Most sensors",
+          "mode": "none",
+          "decoder": "rtl_433"
+        }
       ]
     },
     {
       "id": "pmr446",
       "name": "PMR446",
-      "regions": ["eu"],
-      "lo_mhz": 446.0, "hi_mhz": 446.2,
+      "regions": [
+        "eu"
+      ],
+      "lo_mhz": 446.0,
+      "hi_mhz": 446.2,
       "tune_mhz": 446.1,
       "hf": false,
       "mode": "nfm",
       "decoder": null,
       "on_air": "License-free walkie-talkies, 16 analog channels (12.5 kHz).",
-      "decode_with": ["NFM demod"],
+      "decode_with": [
+        "NFM demod"
+      ],
       "antenna": "1/4 wave (about 17 cm); the log-periodic works",
       "tx_license": "License-free with type-approved PMR446 radios",
       "starter": "rtl_fm -f 446.00625M -M fm -s 24k | play -r 24k -t raw -e s -b 16 -c 1 -V1 -",
       "channels": [
-        {"mhz": 446.00625, "name": "Ch 1", "mode": "nfm"},
-        {"mhz": 446.09375, "name": "Ch 8", "mode": "nfm"},
-        {"mhz": 446.19375, "name": "Ch 16", "mode": "nfm"}
+        {
+          "mhz": 446.00625,
+          "name": "Ch 1",
+          "mode": "nfm"
+        },
+        {
+          "mhz": 446.09375,
+          "name": "Ch 8",
+          "mode": "nfm"
+        },
+        {
+          "mhz": 446.19375,
+          "name": "Ch 16",
+          "mode": "nfm"
+        }
       ]
     },
     {
       "id": "frs",
       "name": "FRS / GMRS",
-      "regions": ["us"],
-      "lo_mhz": 462.55, "hi_mhz": 467.725,
+      "regions": [
+        "us"
+      ],
+      "lo_mhz": 462.55,
+      "hi_mhz": 467.725,
       "tune_mhz": 462.6,
       "hf": false,
       "mode": "nfm",
       "decoder": null,
       "on_air": "Family walkie-talkies (FRS, license-free) and GMRS repeaters. Channels 1-7 at 462.5625-462.7125 MHz.",
-      "decode_with": ["NFM demod"],
+      "decode_with": [
+        "NFM demod"
+      ],
       "antenna": "1/4 wave (about 16 cm); the log-periodic works",
       "tx_license": "FRS license-free; GMRS needs an FCC GMRS license",
       "starter": "rtl_fm -f 462.5625M -M fm -s 24k | play -r 24k -t raw -e s -b 16 -c 1 -V1 -",
       "channels": [
-        {"mhz": 462.5625, "name": "Ch 1", "mode": "nfm"},
-        {"mhz": 462.675, "name": "GMRS emergency / Ch 20", "mode": "nfm"}
+        {
+          "mhz": 462.5625,
+          "name": "Ch 1",
+          "mode": "nfm"
+        },
+        {
+          "mhz": 462.675,
+          "name": "GMRS emergency / Ch 20",
+          "mode": "nfm"
+        }
       ]
     },
     {
       "id": "ism868",
       "name": "868 MHz SRD",
-      "regions": ["eu"],
-      "lo_mhz": 863, "hi_mhz": 870,
+      "regions": [
+        "eu"
+      ],
+      "lo_mhz": 863,
+      "hi_mhz": 870,
       "tune_mhz": 868.3,
       "hf": false,
       "mode": "none",
       "decoder": "rtl_433",
       "on_air": "European sensors, smart meters, alarm systems, LoRa / Meshtastic.",
-      "decode_with": ["rtl_433"],
+      "decode_with": [
+        "rtl_433"
+      ],
       "antenna": "1/4 wave (about 8.6 cm); the log-periodic works",
       "tx_license": "License-free short-range devices",
       "starter": "rtl_433 -f 868.3M -s 1024k",
       "channels": [
-        {"mhz": 868.3, "name": "Sensors", "mode": "none", "decoder": "rtl_433"},
-        {"mhz": 869.525, "name": "Meshtastic (EU default)", "mode": "none"}
+        {
+          "mhz": 868.3,
+          "name": "Sensors",
+          "mode": "none",
+          "decoder": "rtl_433"
+        },
+        {
+          "mhz": 869.525,
+          "name": "Meshtastic (EU default)",
+          "mode": "none"
+        }
       ]
     },
     {
       "id": "ism915",
       "name": "915 MHz ISM",
-      "regions": ["us"],
-      "lo_mhz": 902, "hi_mhz": 928,
+      "regions": [
+        "us"
+      ],
+      "lo_mhz": 902,
+      "hi_mhz": 928,
       "tune_mhz": 915.0,
       "hf": false,
       "mode": "none",
       "decoder": "rtl_433",
-      "on_air": "US sensors, utility meters, LoRa / Meshtastic. Wide band: tune around it.",
-      "decode_with": ["rtl_433"],
+      "on_air": "US sensors, utility meters, LoRa / Meshtastic. Wide band: tune around it. Utility meters (ERT SCM/IDM, Neptune R900) hop around 910-920 MHz; sweep shows only the meter IDs you configure.",
+      "decode_with": [
+        "rtl_433"
+      ],
       "antenna": "1/4 wave (about 8 cm); the log-periodic works",
       "tx_license": "License-free Part 15 devices; 33 cm amateur band shares it",
       "starter": "rtl_433 -f 915M -s 1024k",
       "channels": [
-        {"mhz": 915.0, "name": "Sensors", "mode": "none", "decoder": "rtl_433"},
-        {"mhz": 906.875, "name": "Meshtastic (US default)", "mode": "none"}
+        {
+          "mhz": 915.0,
+          "name": "Sensors",
+          "mode": "none",
+          "decoder": "rtl_433"
+        },
+        {
+          "mhz": 906.875,
+          "name": "Meshtastic (US default)",
+          "mode": "none"
+        },
+        {
+          "mhz": 912.6,
+          "name": "Utility meters (ERT/R900): your own meter only",
+          "mode": "none",
+          "decoder": "meters"
+        }
       ]
     },
     {
       "id": "uat",
       "name": "UAT 978",
-      "regions": ["us"],
-      "lo_mhz": 977, "hi_mhz": 979,
+      "regions": [
+        "us"
+      ],
+      "lo_mhz": 977,
+      "hi_mhz": 979,
       "tune_mhz": 978.0,
       "hf": false,
       "mode": "none",
-      "decoder": null,
+      "decoder": "uat",
       "on_air": "US general-aviation ADS-B (UAT) plus FIS-B weather and TIS-B traffic.",
-      "decode_with": ["dump978-fa (not installed)"],
+      "decode_with": [
+        "dump978 + uat2json/uat2text (aircraft and FIS-B weather text)"
+      ],
       "antenna": "1/4 wave (about 7.7 cm); the log-periodic works",
       "tx_license": "Aircraft only",
-      "starter": "rtl_sdr -f 978M -s 2.083334M - | dump978-fa --stdin",
+      "starter": "sdrctl decoder uat",
       "channels": [
-        {"mhz": 978.0, "name": "UAT", "mode": "none"}
+        {
+          "mhz": 978.0,
+          "name": "UAT",
+          "mode": "none",
+          "decoder": "uat"
+        }
       ]
     },
     {
       "id": "adsb",
       "name": "ADS-B 1090",
-      "regions": ["us", "eu"],
-      "lo_mhz": 1089, "hi_mhz": 1091,
+      "regions": [
+        "us",
+        "eu"
+      ],
+      "lo_mhz": 1089,
+      "hi_mhz": 1091,
       "tune_mhz": 1090.0,
       "hf": false,
       "mode": "none",
       "decoder": "adsb",
       "on_air": "Aircraft position, altitude, speed and callsign (Mode S / ADS-B).",
-      "decode_with": ["dump1090-fa", "readsb"],
+      "decode_with": [
+        "dump1090-fa",
+        "readsb"
+      ],
       "antenna": "1090 MHz 1/4 wave (about 6.9 cm) or collinear; just above the log-periodic's 1 GHz rating, so expect reduced range",
       "tx_license": "Aircraft only",
       "starter": "dump1090 --interactive --net",
       "channels": [
-        {"mhz": 1090.0, "name": "Mode S / ADS-B", "mode": "none", "decoder": "adsb"}
+        {
+          "mhz": 1090.0,
+          "name": "Mode S / ADS-B",
+          "mode": "none",
+          "decoder": "adsb"
+        }
       ]
     }
   ]

@@ -31,6 +31,7 @@ func main() {
 	rate := flag.Uint("rate", 2_048_000, "initial sample rate")
 	gain := flag.String("gain", "29.7", "initial tuner gain in dB, or auto (auto lifts the noise floor on the R820T)")
 	cfgPath := flag.String("config", config.DefaultPath(), "local config file (receiver location); keep it out of the repo")
+	toolDir := flag.String("tool-dir", defaultToolDir(), "directory searched first for decoder binaries (scripts/install-decoders.sh)")
 	recDir := flag.String("record-dir", "recordings", "directory for IQ recordings (POST /api/record)")
 	iqFreq := flag.Float64("iq-freq", 0, "with -iq: center frequency of the recording in Hz (default: from the file name)")
 	flag.StringVar(&cfg.File, "iq", "", "play back a cu8 recording (looping) instead of using the dongle")
@@ -99,6 +100,9 @@ func main() {
 	events := decoder.NewEvents()
 	decoders := decoder.NewManager(r, events)
 	decoders.SBSPort = *sbsPort
+	decoders.MeterIDs = func() []string { return store.Get().MeterIDs }
+	decoders.Audio = audio
+	decoders.ToolDirs = []string{*toolDir}
 	decoders.Receiver = func() (float64, float64, bool) {
 		if r := store.Get().Receiver; r != nil {
 			return r.Lat, r.Lon, true
@@ -142,4 +146,12 @@ func parseFreq(s string) (float64, error) {
 		return 0, fmt.Errorf("bad frequency %q", s)
 	}
 	return v * mult, nil
+}
+
+func defaultToolDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home + "/.local/share/sweep/bin"
 }

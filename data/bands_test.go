@@ -33,7 +33,7 @@ func TestBandsValid(t *testing.T) {
 		t.Fatalf("default region %q unknown", cat.DefaultRegion)
 	}
 	modes := map[string]bool{"nfm": true, "am": true, "usb": true, "lsb": true, "none": true}
-	decoders := map[string]bool{"rtl_433": true, "adsb": true, "aprs": true, "ais": true}
+	decoders := map[string]bool{"rtl_433": true, "meters": true, "adsb": true, "aprs": true, "ais": true, "packet": true, "radiosonde": true, "uat": true, "dsd": true}
 	seen := map[string]bool{}
 	for _, b := range cat.Bands {
 		if seen[b.ID] {

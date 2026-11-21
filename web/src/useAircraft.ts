@@ -65,6 +65,8 @@ function apply(model: Model, e: DecEvent): boolean {
         if (++r.still > 8) r.trend = 0;
       }
     }
+    const vr = numOrNull(raw.vert_rate); // UAT: ft/min
+    if (vr !== null && Math.abs(vr) >= 128) r.trend = vr > 0 ? 1 : -1;
     r.gs = numOrNull(raw.gs);
     r.track = numOrNull(raw.track) ?? r.track;
     r.seen = numOrNull(raw.seen);
@@ -86,10 +88,10 @@ function apply(model: Model, e: DecEvent): boolean {
   return true;
 }
 
-export function useAircraft(events: DecEvent[]): AircraftView {
+export function useAircraft(events: DecEvent[], decoder: "adsb" | "uat" = "adsb"): AircraftView {
   return useIncremental<Model, AircraftView>(
     events,
-    "adsb",
+    decoder,
     () => ({ m: new Map() }),
     apply,
     (model) => {

@@ -169,3 +169,26 @@ tr.hov td { background: rgba(255, 255, 255, 0.07); }
 .big { font-size: 20px; font-weight: 600; }
 .spark { display: block; }
 .small { font-size: 10px; }
+
+/* sub tabs, weather, dsd, sondes */
+.subtabs { flex: none; padding: 2px 8px; border-bottom: 1px solid var(--border); }
+.subbody { flex: 1; min-height: 0; min-width: 0; display: flex; }
+.subpane { flex: 1; min-width: 0; min-height: 0; }
+.wx { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.wxbar { flex: none; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; padding: 4px 8px; }
+.wxlist { flex: 1; overflow: auto; padding: 0 8px 8px; }
+.wxhead { position: sticky; top: 0; background: var(--panel); color: var(--ok); font-weight: 600; padding: 3px 0; border-bottom: 1px solid var(--border); }
+.wxrow { display: flex; gap: 10px; padding: 2px 0; align-items: baseline; }
+.wxloc { flex: none; width: 48px; color: var(--warn); }
+.wxtime { flex: none; width: 56px; }
+.wxtext { flex: 1; white-space: pre-wrap; word-break: break-word; }
+.dsd { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.dsdbar { flex: none; display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 4px 10px; border-bottom: 1px solid var(--border); }
+.sondebody { flex: 1; min-height: 0; overflow: auto; }
+.sondelist { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 8px 6px; }
+.sonde { padding: 0 8px 8px; }
+.kvgrid { display: grid; grid-template-columns: max-content 1fr; gap: 1px 12px; margin-bottom: 4px; }
+.charts { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; }
+.profile { display: block; background: var(--bg); border: 1px solid var(--border); }
+.decopts { display: inline-flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.decerr { flex: none; padding: 3px 10px; background: rgba(252, 129, 129, 0.1); border-top: 1px solid var(--bad); border-bottom: 1px solid var(--bad); color: var(--bad); white-space: pre-wrap; }

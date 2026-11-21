@@ -63,8 +63,10 @@ else
 fi
 
 hdr "tools"
-for t in rtl_tcp rtl_sdr rtl_fm rtl_433 dump1090 readsb direwolf sox play rigctl go node npm; do
+TOOLS="$HOME/.local/share/sweep/bin"
+for t in rtl_tcp rtl_sdr rtl_fm rtl_433 dump1090 readsb direwolf dump978 uat2json uat2text rs41mod dfm09mod m10mod lms6Xmod dsd-fme sox play rigctl go node npm; do
   p="$(command -v "$t" 2>/dev/null)"
+  [ -z "$p" ] && [ -x "$TOOLS/$t" ] && p="$TOOLS/$t"
   printf '%-9s %s\n' "$t" "${p:-MISSING}"
 done
 printf '\ngo:   %s\n' "$(go version 2>/dev/null | awk '{print $3}')"

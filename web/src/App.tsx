@@ -16,7 +16,7 @@ import { ToolsMenu } from "./ToolsMenu";
 import { SettingsMenu } from "./SettingsMenu";
 import type { LatLon } from "./geo";
 import { fmtMHz } from "./draw";
-import { setDecoder, type DecoderName } from "./api";
+import { setDecoder, type DecoderName, type DecoderOpts } from "./api";
 import { bandViews, loadRegion, saveRegion, type Band, type Channel } from "./bands";
 
 export function App() {
@@ -34,6 +34,7 @@ export function App() {
   const registerCenter = useCallback((g: (() => LatLon) | null) => setMapCenter(() => g), []);
   const [step, setStep] = useState(100e3);
   const [regionPref, setRegionPref] = useState<string | null>(loadRegion);
+  const [decErr, setDecErr] = useState<string | null>(null);
   const [actErr, setActErr] = useState<string | null>(null);
   const errTimer = useRef<number | undefined>(undefined);
 
@@ -61,8 +62,14 @@ export function App() {
   useEffect(() => () => window.clearTimeout(errTimer.current), []);
 
   const startDecoder = useCallback(
-    (name: DecoderName | "none") => {
-      setDecoder(name, region).then(applyStatus).catch(fail);
+    (name: DecoderName | "none", opts?: DecoderOpts) => {
+      setDecErr(null);
+      setDecoder(name, region, opts)
+        .then(applyStatus)
+        .catch((e: unknown) => {
+          setDecErr(e instanceof Error ? e.message : String(e));
+          fail(e);
+        });
     },
     [region, applyStatus, fail],
   );
@@ -144,7 +151,10 @@ export function App() {
             status={status}
             events={events}
             onSet={startDecoder}
-            error={actErr}
+            error={null}
+            decError={decErr}
+            vfoHz={vfo ? vfo.freq_hz : null}
+            meterIds={config.meterIds}
             receiver={config.receiver}
             registerCenter={registerCenter}
             onOpenSettings={() => setSettingsOpen(true)}

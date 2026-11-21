@@ -171,10 +171,6 @@ var aivdm = regexp.MustCompile(`![A-Z]{2}VD[MO],[^\s<]*`)
 // runDirewolf demodulates NFM with a private demod and pipes the audio into
 // direwolf (1200 baud APRS or AIS).
 func (m *Manager) runDirewolf(ctx context.Context, st *Status, kind, region string) error {
-	bin, err := lookTool("direwolf")
-	if err != nil {
-		return err
-	}
 	var freq uint32
 	var bw float64
 	raw := false
@@ -187,6 +183,23 @@ func (m *Manager) runDirewolf(ctx context.Context, st *Status, kind, region stri
 		}
 	case "ais":
 		freq, bw, raw, modem = 161_975_000, 25000, true, "AIS"
+	}
+	return m.direwolf(ctx, st, kind, freq, bw, raw, modem)
+}
+
+// runPacket decodes AX.25 packets (amateur satellites, packet radio) at any
+// frequency: 1200 baud AFSK or 9600 baud G3RUH. The channel is wide (25 kHz)
+// to tolerate satellite Doppler.
+func (m *Manager) runPacket(ctx context.Context, st *Status, freq uint32, baud int) error {
+	return m.direwolf(ctx, st, "packet", freq, 25000, baud == 9600, strconv.Itoa(baud))
+}
+
+// direwolf tunes so freq sits a quarter span above center, runs a private
+// NFM demod there and pipes its audio into direwolf.
+func (m *Manager) direwolf(ctx context.Context, st *Status, kind string, freq uint32, bw float64, raw bool, modem string) error {
+	bin, err := lookTool("direwolf")
+	if err != nil {
+		return err
 	}
 	cur := m.r.Status()
 	// Put the channel a quarter of the span above center, away from the DC spike.
@@ -235,9 +248,9 @@ func (m *Manager) runDirewolf(ctx context.Context, st *Status, kind, region stri
 				continue
 			}
 		}
-		if mm := direwolfLine.FindStringSubmatch(line); mm != nil && kind == "aprs" {
+		if mm := direwolfLine.FindStringSubmatch(line); mm != nil && (kind == "aprs" || kind == "packet") {
 			if p, ok := parseAPRS(mm[1]); ok {
-				m.ev.Publish("aprs", "message", p)
+				m.ev.Publish(kind, "message", p)
 				continue
 			}
 		}

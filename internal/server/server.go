@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"log"
@@ -122,13 +123,13 @@ func Handler(d Deps) http.Handler {
 	mux.HandleFunc("POST /api/decoder", func(w http.ResponseWriter, req *http.Request) {
 		var body struct {
 			Decoder string `json:"decoder"`
-			Region  string `json:"region"`
+			decoder.Options
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&body); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := d.Decoders.Start(body.Decoder, body.Region); err != nil {
+		if err := d.Decoders.Start(body.Decoder, body.Options); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
@@ -138,8 +139,23 @@ func Handler(d Deps) http.Handler {
 		writeJSON(w, http.StatusOK, d.Config.Get())
 	})
 	mux.HandleFunc("PUT /api/config", func(w http.ResponseWriter, req *http.Request) {
-		var c config.Config
-		if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&c); err != nil {
+		// Merge: only the fields present in the body change.
+		var patch map[string]json.RawMessage
+		if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&patch); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		c := d.Config.Get()
+		var err error
+		if v, ok := patch["receiver"]; ok {
+			c.Receiver = nil
+			err = errors.Join(err, json.Unmarshal(v, &c.Receiver))
+		}
+		if v, ok := patch["meter_ids"]; ok {
+			c.MeterIDs = nil
+			err = errors.Join(err, json.Unmarshal(v, &c.MeterIDs))
+		}
+		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}

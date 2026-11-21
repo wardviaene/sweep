@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { bandChannels, bandRange, type Band, type Catalog, type Channel } from "./bands";
-import type { DecoderName } from "./api";
+import type { DecoderName, DecoderOpts } from "./api";
 
 type Filter = "all" | "stock" | "hf";
 
@@ -12,9 +12,13 @@ interface Props {
   centerHz: number | undefined;
   onJump: (b: Band) => void;
   onChannel: (b: Band, c: Channel) => void;
-  onDecoder: (d: DecoderName) => void;
+  onDecoder: (d: DecoderName, opts?: DecoderOpts) => void;
   error: string | null;
 }
+
+const FREQ_DECODERS = new Set<DecoderName>(["packet", "dsd", "radiosonde"]);
+const optsFor = (d: DecoderName, mhz: number): DecoderOpts | undefined =>
+  FREQ_DECODERS.has(d) ? { freq_hz: Math.round(mhz * 1e6) } : undefined;
 
 const fmt = (mhz: number) => String(+mhz.toFixed(6));
 
@@ -104,7 +108,7 @@ function Detail({ band: b, region, onJump, onChannel, onDecoder }: Props & { ban
     <div className="detail">
       <div className="btns">
         <button onClick={() => onJump(b)} title={`Tune to ${fmt(b.tune_mhz)} MHz`}>Jump</button>
-        {b.decoder && <button onClick={() => onDecoder(b.decoder!)}>Start {b.decoder}</button>}
+        {b.decoder && <button onClick={() => onDecoder(b.decoder!, optsFor(b.decoder!, b.tune_mhz))}>Start {b.decoder}</button>}
       </div>
       <Field k="on air" v={b.on_air} />
       <Field k="decode with" v={b.decode_with.join(", ")} />
@@ -127,7 +131,7 @@ function Detail({ band: b, region, onJump, onChannel, onDecoder }: Props & { ban
                   className="mini"
                   onClick={(e) => {
                     e.stopPropagation();
-                    onDecoder(c.decoder!);
+                    onDecoder(c.decoder!, optsFor(c.decoder!, c.mhz));
                   }}
                 >
                   decode

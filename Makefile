@@ -1,4 +1,4 @@
-.PHONY: envcheck build test dev dev-synth web
+.PHONY: envcheck build test dev dev-synth web decoders
 
 envcheck:
 	@bash scripts/envcheck.sh
@@ -20,3 +20,7 @@ dev: build
 # same, with the synthetic IQ source (no dongle needed)
 dev-synth: SDRD_ARGS = -synth
 dev-synth: dev
+
+# build decoders not in Homebrew (radiosonde, UAT 978, dsd-fme) into ~/.local/share/sweep/bin
+decoders:
+	@bash scripts/install-decoders.sh

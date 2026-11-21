@@ -14,7 +14,7 @@ function ago(now: number, ts: number): string {
   return `${Math.floor(s / 3600)} h ago`;
 }
 
-function Spark({ v, color }: { v: number[]; color: string }) {
+export function Spark({ v, color }: { v: number[]; color: string }) {
   if (v.length < 2) return <svg className="spark" width="100" height="22" />;
   const lo = Math.min(...v);
   const hi = Math.max(...v);

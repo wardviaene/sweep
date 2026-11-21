@@ -21,6 +21,9 @@ type Receiver struct {
 // Config is the stored configuration.
 type Config struct {
 	Receiver *Receiver `json:"receiver"`
+	// MeterIDs are the utility meters the user owns. The meters decoder
+	// shows only these; every other meter is counted but never published.
+	MeterIDs []string `json:"meter_ids,omitempty"`
 }
 
 // Store loads and saves the config file.
@@ -64,6 +67,7 @@ func (s *Store) Get() Config {
 		r := *c.Receiver
 		c.Receiver = &r
 	}
+	c.MeterIDs = append([]string(nil), c.MeterIDs...)
 	return c
 }
 

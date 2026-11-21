@@ -17,6 +17,13 @@ make dev                                                   # sdrd + Vite; open h
 
 No dongle? `make dev-synth` runs everything against a synthetic IQ source.
 
+Decoders not in Homebrew (radiosondes, UAT 978, DMR/D-STAR/YSF via dsd-fme) build from pinned upstream commits into `~/.local/share/sweep/bin`:
+
+```bash
+brew install cmake libsndfile ncurses mbelib pulseaudio codec2
+make decoders
+```
+
 ## Decoded data
 
 The decoder panel (expand it with ⤢) has a view per decoder:
@@ -25,6 +32,11 @@ The decoder panel (expand it with ⤢) has a view per decoder:
 - **APRS**: stations on the map with their tracks, plus the packet list.
 - **AIS**: vessels on the map plus a table, with names and callsigns merged from static messages.
 - **Sensors (rtl_433)**: one card per device with the latest readings and temperature/humidity sparklines.
+- **UAT 978**: the same aircraft map (US general aviation), plus FIS-B weather text (METAR, TAF, winds aloft) grouped by type.
+- **Radiosondes**: weather balloons at 400-406 MHz (RS41, DFM, M10, LMS6), with a map track and temperature/humidity vs altitude. Auto mode tunes to the strongest carrier; launches happen around 00 and 12 UTC.
+- **Digital voice (dsd)**: DMR, D-STAR, YSF and NXDN call log, with voice in the audio stream. Amateur bands only; encrypted traffic is never decrypted.
+- **Meters**: your own utility meter (ERT/R900, about 912-920 MHz). Other meters are counted but their IDs are never stored or shown.
+- **Packet**: AX.25 at 1200 or 9600 baud, for example amateur satellite telemetry at 435-438 MHz.
 
 Maps use OpenStreetMap tiles. Your browser fetches them from tile.openstreetmap.org, so OSM can see which area you view. sdrd itself makes no external calls.
 

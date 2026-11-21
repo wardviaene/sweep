@@ -142,6 +142,7 @@ type Radio struct {
 	lastErr string
 	frames  chan []float64 // completed spectra, paced out by emit
 	pool    sync.Pool
+	hold    []float64 // max-hold spectrum since the last retune (RecentSpectrum)
 
 	demod     *dsp.Demod // listening VFO, nil when off
 	dm        DemodInfo
@@ -206,6 +207,14 @@ func (r *Radio) Status() Status {
 // Tune applies a tuning request.
 func (r *Radio) Tune(req TuneRequest) (Status, error) {
 	r.mu.Lock()
+	// Playing a recording: the center and rate are fixed, but requests that
+	// match them are accepted so decoders can run on recordings.
+	if r.cfg.File != "" && req.FreqHz != nil && *req.FreqHz == r.st.CenterHz {
+		req.FreqHz = nil
+	}
+	if r.cfg.File != "" && req.SampleRate != nil && *req.SampleRate == r.st.SampleRate {
+		req.SampleRate = nil
+	}
 	if r.cfg.File != "" && (req.FreqHz != nil || req.SampleRate != nil) {
 		r.mu.Unlock()
 		return Status{}, fmt.Errorf("playing a recording: tuning is disabled")
@@ -265,10 +274,11 @@ func (r *Radio) Tune(req TuneRequest) (Status, error) {
 		r.st.GainDB = req.GainDB
 	}
 	r.spec.Reset()
+	r.hold = r.hold[:0]
 	for len(r.frames) > 0 {
 		r.pool.Put(<-r.frames)
 	}
-	r.skip = int(r.st.SampleRate) / 10 // drop ~50 ms of samples (2 bytes each) from before the retune
+	r.skip = (int(r.st.SampleRate) / 10) &^ 1 // drop ~50 ms of samples (2 bytes each) from before the retune; keep I/Q byte alignment
 	meta := r.metaLocked()
 	r.mu.Unlock()
 	r.sink.Meta(meta)
@@ -434,6 +444,13 @@ func (r *Radio) pushFrameLocked() {
 		db = make([]float64, r.cfg.FFTSize)
 	}
 	r.spec.Take(db)
+	if len(r.hold) != len(db) {
+		r.hold = append(r.hold[:0], db...)
+	} else {
+		for i, v := range db {
+			r.hold[i] = max(r.hold[i], v)
+		}
+	}
 	select {
 	case r.frames <- db:
 	default: // consumer behind: drop
@@ -466,4 +483,16 @@ func (r *Radio) emit(ctx context.Context) {
 		r.pool.Put(db)
 		r.sink.Frame(out)
 	}
+}
+
+// RecentSpectrum returns the max-hold spectrum (dB) since the last retune,
+// with the frequency of bin 0 and the bin width.
+func (r *Radio) RecentSpectrum() (db []float64, startHz, binHz float64, ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.hold) == 0 {
+		return nil, 0, 0, false
+	}
+	binHz = float64(r.st.SampleRate) / float64(len(r.hold))
+	return append([]float64(nil), r.hold...), float64(r.st.CenterHz) - float64(r.st.SampleRate)/2, binHz, true
 }

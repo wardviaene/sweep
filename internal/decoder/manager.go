@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -16,7 +17,14 @@ import (
 )
 
 // Names of the supported decoders.
-var Names = []string{"rtl_433", "adsb", "aprs", "ais"}
+var Names = []string{"rtl_433", "meters", "adsb", "uat", "aprs", "ais", "packet", "radiosonde", "dsd"}
+
+// Options are per-start decoder parameters (see docs/protocol.md).
+type Options struct {
+	Region string `json:"region"`  // aprs: us | eu
+	FreqHz uint32 `json:"freq_hz"` // packet: channel frequency
+	Baud   int    `json:"baud"`    // packet: 1200 | 9600
+}
 
 // Status is status.decoder.
 type Status struct {
@@ -34,6 +42,9 @@ type Manager struct {
 	ev       *Events
 	SBSPort  int                                // dump1090 SBS output port (private, 127.0.0.1)
 	Receiver func() (lat, lon float64, ok bool) // receiver location for dump1090, if set
+	MeterIDs func() []string                    // utility meters the user owns; all others are hidden
+	Audio    radio.AudioSink                    // where decoded digital voice (dsd) is sent
+	ToolDirs []string                           // extra directories searched for decoder binaries
 
 	mu   sync.Mutex
 	cur  *run
@@ -79,8 +90,10 @@ func (m *Manager) Stop() {
 }
 
 // Start stops any running decoder and starts name ("none" just stops).
-func (m *Manager) Start(name, region string) error {
+func (m *Manager) Start(name string, opt Options) error {
+	region := opt.Region
 	m.Stop()
+	toolDirs = m.ToolDirs
 	if name == "none" || name == "" {
 		m.mu.Lock()
 		m.last = Status{Name: "none"}
@@ -97,6 +110,37 @@ func (m *Manager) Start(name, region string) error {
 		fn = func(ctx context.Context, st *Status) error { return m.runDirewolf(ctx, st, "aprs", region) }
 	case "ais":
 		fn = func(ctx context.Context, st *Status) error { return m.runDirewolf(ctx, st, "ais", region) }
+	case "meters":
+		fn = m.runMeters
+	case "uat":
+		fn = m.runUAT
+	case "radiosonde":
+		fn = func(ctx context.Context, st *Status) error { return m.runRadiosonde(ctx, st, opt.FreqHz) }
+	case "dsd":
+		if opt.FreqHz == 0 {
+			opt.FreqHz = m.r.Status().Demod.FreqHz
+		}
+		if opt.FreqHz == 0 {
+			return fmt.Errorf("dsd: give freq_hz (or set the VFO first)")
+		}
+		if !amateurBand(opt.FreqHz) {
+			return fmt.Errorf("dsd: %.4f MHz is outside the amateur bands; sweep only decodes digital voice on amateur frequencies (50-54, 144-148, 222-225, 420-450, 902-928, 1240-1300 MHz)", float64(opt.FreqHz)/1e6)
+		}
+		fn = func(ctx context.Context, st *Status) error { return m.runDSD(ctx, st, opt.FreqHz) }
+	case "packet":
+		if opt.Baud == 0 {
+			opt.Baud = 1200
+		}
+		if opt.Baud != 1200 && opt.Baud != 9600 {
+			return fmt.Errorf("packet: baud must be 1200 or 9600")
+		}
+		if opt.FreqHz == 0 {
+			opt.FreqHz = m.r.Status().Demod.FreqHz
+		}
+		if opt.FreqHz == 0 {
+			return fmt.Errorf("packet: give freq_hz (or set the VFO first)")
+		}
+		fn = func(ctx context.Context, st *Status) error { return m.runPacket(ctx, st, opt.FreqHz, opt.Baud) }
 	default:
 		return fmt.Errorf("decoder %q: want one of %s or none", name, strings.Join(Names, ", "))
 	}
@@ -129,11 +173,15 @@ func (m *Manager) Start(name, region string) error {
 		default:
 		}
 	}()
-	// Report immediate failures (missing tool, bad tune) to the caller.
+	// Report immediate failures (missing tool, bad tune, no sonde found) to the caller.
+	wait := 1500 * time.Millisecond
+	if name == "radiosonde" && opt.FreqHz == 0 {
+		wait = 8 * time.Second // the auto-search scans three windows first
+	}
 	select {
 	case err := <-ready:
 		return err
-	case <-time.After(1500 * time.Millisecond):
+	case <-time.After(wait):
 		return nil
 	}
 }
@@ -144,13 +192,22 @@ func (m *Manager) setFreq(st *Status, f uint32) {
 	m.mu.Unlock()
 }
 
+// toolDirs are searched before PATH (set from Manager.ToolDirs at start).
+var toolDirs []string
+
 func lookTool(names ...string) (string, error) {
 	for _, n := range names {
+		for _, d := range toolDirs {
+			p := filepath.Join(d, n)
+			if st, err := os.Stat(p); err == nil && !st.IsDir() && st.Mode()&0o111 != 0 {
+				return p, nil
+			}
+		}
 		if p, err := exec.LookPath(n); err == nil {
 			return p, nil
 		}
 	}
-	return "", fmt.Errorf("%s not found in PATH (brew install %s)", names[0], names[0])
+	return "", fmt.Errorf("%s not found in %v or PATH (see scripts/install-decoders.sh, or brew install %s)", names[0], toolDirs, names[0])
 }
 
 // pumpIQ copies tap blocks into w until the tap closes or ctx ends.
@@ -216,4 +273,16 @@ func tempDir(name string) (string, func(), error) {
 		return "", nil, err
 	}
 	return d, func() { os.RemoveAll(d) }, nil
+}
+
+// amateurBand reports whether f (Hz) is inside a VHF/UHF amateur allocation
+// (union of ITU regions 1 and 2). Digital voice decoding is limited to these.
+func amateurBand(f uint32) bool {
+	mhz := float64(f) / 1e6
+	for _, b := range [][2]float64{{50, 54}, {144, 148}, {222, 225}, {420, 450}, {902, 928}, {1240, 1300}} {
+		if mhz >= b[0] && mhz <= b[1] {
+			return true
+		}
+	}
+	return false
 }

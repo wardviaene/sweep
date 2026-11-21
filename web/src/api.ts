@@ -33,7 +33,14 @@ export interface DemodParams {
   squelch_db?: number | null;
 }
 
-export type DecoderName = "rtl_433" | "adsb" | "aprs" | "ais";
+export type DecoderName =
+  | "rtl_433" | "meters" | "adsb" | "uat" | "aprs" | "ais" | "packet" | "radiosonde" | "dsd";
+
+/** Per-decoder start options (packet, dsd, radiosonde). */
+export interface DecoderOpts {
+  freq_hz?: number;
+  baud?: number;
+}
 
 export interface DecoderStatus {
   name: DecoderName | "none";
@@ -42,6 +49,7 @@ export interface DecoderStatus {
   started: number;
   events: number;
   error: string;
+  baud?: number; // packet only, when the backend reports it
 }
 
 export interface TuneParams {
@@ -90,8 +98,12 @@ export function setDemod(params: DemodParams): Promise<Status> {
   return post<Status>("/api/demod", params);
 }
 
-export function setDecoder(decoder: DecoderName | "none", region?: string): Promise<Status> {
-  return post<Status>("/api/decoder", region ? { decoder, region } : { decoder });
+export function setDecoder(decoder: DecoderName | "none", region?: string, opts?: DecoderOpts): Promise<Status> {
+  const body: Record<string, unknown> = { decoder };
+  if (region) body.region = region;
+  if (opts?.freq_hz !== undefined) body.freq_hz = opts.freq_hz;
+  if (opts?.baud !== undefined) body.baud = opts.baud;
+  return post<Status>("/api/decoder", body);
 }
 
 export function getBands(signal?: AbortSignal): Promise<import("./bands").Catalog> {
@@ -156,6 +168,18 @@ export interface Receiver {
 
 export interface Config {
   receiver: Receiver | null;
+  meter_ids: string[];
+}
+
+/** PUT merges: send only the fields being changed. */
+export interface ConfigPatch {
+  receiver?: Receiver | null;
+  meter_ids?: string[];
+}
+
+function toConfig(c: { receiver?: Receiver | null; meter_ids?: unknown }): Config {
+  const ids = Array.isArray(c.meter_ids) ? c.meter_ids.filter((x): x is string => typeof x === "string") : [];
+  return { receiver: c.receiver ?? null, meter_ids: ids };
 }
 
 /** Resolves null when the backend has no /api/config (404). */
@@ -163,15 +187,14 @@ export async function getConfig(signal?: AbortSignal): Promise<Config | null> {
   const res = await fetch("/api/config", { signal });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`/api/config: ${res.status} ${await res.text()}`);
-  const c = (await res.json()) as Partial<Config>;
-  return { receiver: c.receiver ?? null };
+  return toConfig((await res.json()) as { receiver?: Receiver | null; meter_ids?: unknown });
 }
 
-export async function putConfig(receiver: Receiver | null): Promise<Config> {
+export async function putConfig(patch: ConfigPatch): Promise<Config> {
   const res = await fetch("/api/config", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ receiver }),
+    body: JSON.stringify(patch),
   });
   const text = await res.text();
   if (!res.ok) {
@@ -184,6 +207,5 @@ export async function putConfig(receiver: Receiver | null): Promise<Config> {
     }
     throw new Error(msg || `status ${res.status}`);
   }
-  const c = JSON.parse(text) as Partial<Config>;
-  return { receiver: c.receiver ?? null };
+  return toConfig(JSON.parse(text) as { receiver?: Receiver | null; meter_ids?: unknown });
 }

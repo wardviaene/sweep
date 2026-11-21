@@ -98,9 +98,14 @@ At most one decoder runs at a time. Starting one retunes the radio to what it ne
 | `adsb` | 1090 MHz, 2.4 MS/s | IQ piped to `dump1090 --ifile -` |
 | `aprs` | 144.39 MHz (US) / 144.8 MHz (EU) via an internal NFM demod | audio piped to `direwolf` |
 | `ais` | 161.975 MHz via an internal NFM demod | audio piped to `direwolf -B AIS` |
+| `meters` | 914 MHz, 2.4 MS/s | IQ piped to `rtl_433` with the ERT SCM/SCM+/IDM and Neptune R900 protocols; only `meter_ids` from the config are published |
+| `uat` | 978 MHz, 2.083334 MS/s | IQ piped to `dump978`; downlink frames to `uat2json` (aircraft), uplink frames to `uat2text` (FIS-B weather text) |
+| `radiosonde` | `freq_hz`, or the strongest non-spur carrier found in 400-406 MHz; 2.4 MS/s, 15 kHz raw NFM | WAV audio fanned out to `rs41mod`, `dfm09mod`, `m10mod`, `lms6Xmod` (rs1729/RS) |
+| `dsd` | `freq_hz` (default: the VFO); 2.4 MS/s so the raw NFM audio is 48 kHz | audio piped to `dsd-fme -fa`; decoded voice returns over UDP (8 kHz) and replaces the `/ws/audio` stream (meta `mode: "dsd"`, `rate: 8000`); the VFO is turned off |
+| `packet` | `freq_hz` (default: the VFO) via an internal 25 kHz NFM demod | audio piped to `direwolf -B 1200|9600` (AX.25: packet radio, amateur satellites) |
 
 ### `POST /api/decoder`
-Body: `{"decoder": "rtl_433" | "adsb" | "aprs" | "ais" | "none", "region": "us"}` (`region` only matters for aprs). Returns the status. `GET /api/status` includes
+Body: `{"decoder": "rtl_433" | "meters" | "adsb" | "uat" | "aprs" | "ais" | "packet" | "radiosonde" | "dsd" | "none", "region": "us", "freq_hz": 437800000, "baud": 9600}` (`region` only matters for aprs; `freq_hz` for packet, dsd and radiosonde; `baud` (1200 or 9600) only for packet). Returns the status. `GET /api/status` includes
 ```json
 "decoder": {"name": "rtl_433", "running": true, "freq_hz": 433920000, "started": 1795286400, "events": 12, "error": ""}
 ```
@@ -121,6 +126,12 @@ Event envelope:
 - `adsb`, kind `snapshot`, once per second: `{"aircraft": [{"hex": "a1b2c3", "flight": "UAL123", "alt_baro": 35000, "gs": 450.2, "track": 270.1, "lat": 40.1, "lon": -74.2, "seen": 0.4, "rssi": -20.1, "messages": 120}]}` (fields absent when unknown).
 - `aprs`, kind `message`: `{"raw": "N0CALL-9>APRS,WIDE2-1:!4903.50N/07201.75W>...", "from": "N0CALL-9", "to": "APRS", "path": ["WIDE2-1"], "info": "!4903.50N/07201.75W>...", "lat": 49.058, "lon": -72.029, "comment": "..."}` (`lat`/`lon`/`comment` only for uncompressed position reports).
 - `ais`, kind `message`: `{"nmea": "!AIVDM,1,1,,A,...", "type": 1, "mmsi": 366123456, "lat": 37.8, "lon": -122.4, "sog": 12.3, "cog": 87.0, "heading": 88, "name": "..." , "callsign": "...", "shiptype": 70}` (fields present when the message type carries them).
+- `meters`, kind `message`: rtl_433's JSON for your own meters only (`model`, `id`, `consumption_data`, ...). Kind `snapshot` every 5 s: `{"own_ids": 1, "other_meters_heard": 23}`. Other meters' IDs are never stored or published (they are counted by a salted in-memory hash).
+- `uat`, kind `snapshot` once per second: `{"aircraft": [...]}` with the same fields as `adsb` (UAT aircraft: hex, flight, alt_baro, gs, track, lat, lon, seen, messages; plus `vert_rate`, `addrtype` when present).
+- `uat`, kind `message`: FIS-B text reports `{"kind": "fisb", "product": "413 (...)", "report_type": "METAR" | "TAF" | "WINDS" | "NOTAM" | ..., "location": "KXYZ", "time": "211953Z", "text": "METAR KXYZ 211953Z ..."}`.
+- `radiosonde`, kind `message`: the rs1729 decoder JSON as-is plus `freq_hz`. Common fields: `type` ("RS41", "DFM", "M10", "LMS6"), `id` (serial), `frame`, `datetime`, `lat`, `lon`, `alt` (m), `vel_h` (m/s), `heading` (deg), `vel_v` (m/s, climb rate), `sats`, and when available `temp` (degC), `humidity` (%), `pressure` (hPa), `batt` (V).
+- `dsd`, kind `message`: one per call (repeats of the same call within 3 s are merged): `{"mode": "DMR", "tgt": 3100, "src": 3125487, "color_code": 1, "encrypted": true?, "line": "..."}` (fields present when dsd-fme printed them). Encrypted traffic is never decrypted; dsd-fme mutes it.
+- `packet`, kind `message`: same shape as `aprs` (`raw`, `from`, `to`, `path`, `info`, plus `lat`/`lon` when the info field is an APRS position).
 - any decoder, kind `log`: `{"line": "..."}` for tool stderr worth showing (startup errors etc).
 
 ## Scan and record
@@ -141,9 +152,9 @@ Body: `{"seconds": 5}` (0.1-60). Blocks while recording raw cu8 IQ at the curren
 
 ### `GET /api/config`
 ```json
-{"receiver": {"lat": 12.34, "lon": 56.78, "alt_m": 100}}
+{"receiver": {"lat": 12.34, "lon": 56.78, "alt_m": 100}, "meter_ids": ["12345678"]}
 ```
-`receiver` is `null` until set. Stored by sdrd in a local JSON file (default `~/.config/sweep/config.json`, flag `-config`).
+`receiver` is `null` until set. `meter_ids` lists the utility meters you own (the ID printed on the meter); the meters decoder publishes only these. Stored by sdrd in a local JSON file (default `~/.config/sweep/config.json`, flag `-config`).
 
 ### `PUT /api/config`
-Body: `{"receiver": {"lat": 12.34, "lon": 56.78, "alt_m": 100}}` (`alt_m` optional) or `{"receiver": null}` to clear. Returns the config. lat must be -90..90, lon -180..180. When set, the ADS-B decoder passes it to dump1090 (`--lat/--lon`), which enables local position decoding; restart the decoder for a change to apply.
+Body: any of `{"receiver": {"lat": 12.34, "lon": 56.78, "alt_m": 100}}` (`alt_m` optional; `null` clears) and `{"meter_ids": ["12345678"]}`. Only the fields present change. Returns the config. lat must be -90..90, lon -180..180. When set, the ADS-B decoder passes it to dump1090 (`--lat/--lon`), which enables local position decoding; restart the decoder for a change to apply.

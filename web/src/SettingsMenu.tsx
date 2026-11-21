@@ -18,6 +18,7 @@ export function SettingsMenu(props: {
   const [lon, setLon] = useState("");
   const [alt, setAlt] = useState("");
   const [busy, setBusy] = useState(false);
+  const [ids, setIds] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -27,6 +28,11 @@ export function SettingsMenu(props: {
     setAlt(receiver?.alt_m === undefined ? "" : String(receiver.alt_m));
   }, [receiver]);
 
+  useEffect(() => setIds(config.meterIds.join(", ")), [config.meterIds]);
+
+  const idList = ids.split(/[,\s]+/).filter((x) => x !== "");
+  const idsBad = idList.some((x) => !/^\d+$/.test(x));
+
   const la = parse(lat);
   const lo = parse(lon);
   const al = parse(alt);
@@ -35,12 +41,13 @@ export function SettingsMenu(props: {
   const altBad = alt !== "" && al === null;
   const valid = la !== null && lo !== null && !latBad && !lonBad && !altBad;
 
-  const run = async (r: Parameters<ConfigApi["save"]>[0], ok: string) => {
+  const run = async (r: Parameters<ConfigApi["save"]>[0] | string[], ok: string) => {
     setBusy(true);
     setErr(null);
     setMsg(null);
     try {
-      await config.save(r);
+      if (Array.isArray(r)) await config.saveMeterIds(r);
+      else await config.save(r);
       setMsg(ok);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -89,6 +96,23 @@ export function SettingsMenu(props: {
       {err && <div className="err pad0">{err}</div>}
       {msg && <div className="conn-open pad0">{msg}</div>}
       <div className="dim pad0">Restart the ADS-B decoder for a changed location to take effect (Stop, then Start).</div>
+      <hr />
+      <div className="label">my utility meter IDs</div>
+      <div className="form">
+        <input
+          className={`freq ${idsBad ? "invalid" : ""}`}
+          style={{ width: "100%", textAlign: "left" }}
+          value={ids}
+          onChange={(e) => setIds(e.target.value)}
+          placeholder="digits only, comma or space separated"
+          inputMode="numeric"
+        />
+      </div>
+      {idsBad && <div className="err pad0">meter IDs must be digits only.</div>}
+      <div className="row">
+        <button disabled={busy || idsBad || !config.available} onClick={() => void run(idList, "meter IDs saved")}>Save IDs</button>
+      </div>
+      <div className="dim pad0">The ID is printed on your meter; meters you don't own are never shown.</div>
     </Popover>
   );
 }
