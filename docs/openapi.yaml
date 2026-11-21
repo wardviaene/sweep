@@ -42,6 +42,10 @@ tags:
   - name: config
   - name: survey
   - name: metadata
+  - name: scanner
+  - name: files
+  - name: autopilot
+  - name: transcription
 paths:
   /api/status:
     get:
@@ -61,7 +65,7 @@ paths:
       summary: Set center frequency, sample rate and gain
       description: |
         Any subset of fields. Below 24 MHz sdrd switches to direct sampling (HF) automatically.
-        Fails while sdrd plays back a recording unless the values equal the recording's.
+        Fails while sdrd plays back a recording unless the values equal the recording's. Returns 409 while the scanner runs (`scanner running`) or during an autopilot pass (`autopilot pass in progress`).
       requestBody:
         required: true
         content:
@@ -82,7 +86,7 @@ paths:
       description: |
         Audio is delivered on the /ws/audio WebSocket. A mode other than `off` stops a running `dsd`
         decoder (dsd owns the audio stream). If `freq_hz` lies outside the middle 80% of
-        the current span, the center is retuned to `freq_hz - sample_rate/4`.
+        the current span, the center is retuned to `freq_hz - sample_rate/4`. Returns 409 while the scanner runs or during an autopilot pass.
       requestBody:
         required: true
         content:
@@ -162,7 +166,7 @@ paths:
       summary: Start a decoder, or stop it with "none"
       description: |
         Stops any running decoder first. Returns after about 1.5 s (up to about 8 s for `radiosonde`
-        without `freq_hz`), or earlier when the decoder fails immediately. `dsd` only works on amateur bands.
+        without `freq_hz`), or earlier when the decoder fails immediately. `dsd` only works on amateur bands. Returns 409 while a survey, the scanner or an autopilot pass owns the radio.
       requestBody:
         required: true
         content:
@@ -310,6 +314,316 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/SurveyState"}
+  /api/scanner:
+    post:
+      tags: [scanner]
+      operationId: startScanner
+      summary: Start (or reconfigure) the transmission scanner
+      description: |
+        Watches a range (at most 30 MHz, 24-1766 MHz) and points the VFO at carriers that newly appear.
+        Owns the radio like a survey: stops a running decoder; tune/demod/decoder requests return 409
+        while it runs. Body limit 16 KiB. Give a `band` or `lo_hz` and `hi_hz`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ScannerRequest"}
+      responses:
+        "202":
+          description: Scanner running.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ScannerState"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "409": {$ref: "#/components/responses/Conflict"}
+    get:
+      tags: [scanner]
+      operationId: getScanner
+      summary: Scanner state
+      responses:
+        "200":
+          description: State; `idle` before the first start.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ScannerState"}
+  /api/scanner/stop:
+    post:
+      tags: [scanner]
+      operationId: stopScanner
+      summary: Stop the scanner and restore tuning, VFO and decoder
+      responses:
+        "200":
+          description: Final state (`stopped`); also 200 when nothing runs.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ScannerState"}
+  /api/scanner/lockout:
+    post:
+      tags: [scanner]
+      operationId: scannerLockout
+      summary: Add or remove a locked-out channel
+      description: Applies to the running scanner and is remembered per band in the config (`scanner_lockouts`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [freq_hz]
+              properties:
+                freq_hz: {type: integer}
+                remove: {type: boolean, default: false}
+              example: {freq_hz: 132150000}
+      responses:
+        "200":
+          description: Updated state.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ScannerState"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "409":
+          description: No scanner is running (`scanner not running`).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /api/files/{kind}/{name}:
+    get:
+      tags: [files]
+      operationId: getFile
+      summary: Read-only access to SSTV pictures and the autopilot's pass directory
+      description: |
+        Serves only regular files directly in the directory of `kind` (symbolic links are not followed;
+        subdirectories are not reachable). Content type from the extension (.png, .jpg, .json, .txt, .wav,
+        else application/octet-stream). Sends `X-Content-Type-Options: nosniff` and `Cache-Control: no-cache`;
+        range requests are supported.
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema: {type: string, enum: [sstv, passes]}
+        - name: name
+          in: path
+          required: true
+          schema: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", examples: [20261121-151200_pd120.png]}
+      responses:
+        "200":
+          description: The file.
+          content:
+            image/png: {schema: {type: string, format: binary}}
+            image/jpeg: {schema: {type: string, format: binary}}
+            audio/wav: {schema: {type: string, format: binary}}
+            application/json: {schema: {type: string, format: binary}}
+            text/plain: {schema: {type: string, format: binary}}
+            application/octet-stream: {schema: {type: string, format: binary}}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404":
+          description: Unknown kind (JSON error) or no such file.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /api/files/passes/{dir}/{name}:
+    get:
+      tags: [files]
+      operationId: getPassFile
+      summary: A file inside one autopilot pass directory
+      description: pass.json, pass.wav, image-NN.png, packets.jsonl or the .cu8 IQ file. Both `dir` and `name` must be plain names. Symbolic links are not followed.
+      parameters:
+        - name: dir
+          in: path
+          required: true
+          schema: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", examples: [20261121-120000_12345_EXAMPLESAT-1]}
+        - name: name
+          in: path
+          required: true
+          schema: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", examples: [pass.json]}
+      responses:
+        "200":
+          description: The file (content type from the extension).
+          content:
+            application/octet-stream: {schema: {type: string, format: binary}}
+            application/json: {schema: {type: string, format: binary}}
+            image/png: {schema: {type: string, format: binary}}
+            audio/wav: {schema: {type: string, format: binary}}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404":
+          description: No such pass or file.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /api/files/clips/{date}/{name}:
+    get:
+      tags: [transcription]
+      operationId: getClip
+      summary: A recorded voice clip
+      parameters:
+        - name: date
+          in: path
+          required: true
+          schema: {type: string, pattern: "^[0-9]{8}$", examples: ["20261121"]}
+        - name: name
+          in: path
+          required: true
+          schema: {type: string, pattern: "^[0-9]{6}_[0-9]+(-[0-9]+)?\\.wav$", examples: [151248_122900000.wav]}
+      responses:
+        "200":
+          description: 16 kHz mono WAV.
+          content:
+            audio/wav: {schema: {type: string, format: binary}}
+        "404":
+          description: Invalid name or unavailable (plain text), or no such file (JSON error).
+  /api/transcripts:
+    get:
+      tags: [transcription]
+      operationId: getTranscripts
+      summary: Recent voice transcripts, newest first
+      parameters:
+        - name: since
+          in: query
+          schema: {type: number, default: 0, description: "Only entries whose start (Unix seconds) is greater."}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 1000, default: 100}
+        - name: freq_hz
+          in: query
+          schema: {type: integer, minimum: 0, maximum: 2000000000, default: 0, description: "Exact frequency; 0 = any."}
+        - name: q
+          in: query
+          schema: {type: string, description: "Case-insensitive substring of text or label."}
+      responses:
+        "200":
+          description: Array of transcripts (empty when unavailable).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Transcript"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+  /api/transcribe:
+    get:
+      tags: [transcription]
+      operationId: getTranscribe
+      summary: Transcription status
+      responses:
+        "200":
+          description: Status.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TranscribeStatus"}
+    put:
+      tags: [transcription]
+      operationId: putTranscribe
+      summary: Switch transcription on or off
+      description: Saved in the config under `transcribe`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: {type: boolean}
+      responses:
+        "200":
+          description: New status.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TranscribeStatus"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "409": {$ref: "#/components/responses/Conflict"}
+    post:
+      tags: [transcription]
+      operationId: transcribeNow
+      summary: Transcribe the live VFO audio or an existing WAV (blocks)
+      description: Give `seconds` (1-60, records the current VFO) or `path` (a WAV inside the data dir).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                seconds: {type: number, minimum: 1, maximum: 60}
+                path: {type: string, description: "Absolute, or relative to the data dir."}
+              example: {seconds: 10}
+      responses:
+        "200":
+          description: The transcript, or a skipped result.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - {$ref: "#/components/schemas/Transcript"}
+                  - type: object
+                    properties:
+                      text: {type: string}
+                      empty: {type: boolean}
+                      skipped: {type: string, description: "shorter than 0.5 s, near-silent audio, queue full."}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/autopilot:
+    get:
+      tags: [autopilot]
+      operationId: getAutopilot
+      summary: Pass autopilot state, upcoming passes and history
+      responses:
+        "200":
+          description: State.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AutopilotState"}
+    put:
+      tags: [autopilot]
+      operationId: putAutopilot
+      summary: Change autopilot settings (merge)
+      description: Persisted in the local config under `autopilot`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AutopilotSettings"}
+      responses:
+        "200":
+          description: New state.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AutopilotState"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+  /api/autopilot/run:
+    post:
+      tags: [autopilot]
+      operationId: runAutopilotPass
+      summary: Handle a satellite's current pass now
+      description: The satellite must be above the horizon. Ignores min_elevation and the satellite list.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [norad]
+              properties:
+                norad: {type: integer, minimum: 1}
+              example: {norad: 12345}
+      responses:
+        "202":
+          description: Pass started.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AutopilotCurrent"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/autopilot/stop:
+    post:
+      tags: [autopilot]
+      operationId: stopAutopilotPass
+      summary: End the current pass early
+      responses:
+        "200":
+          description: State; also 200 when no pass runs.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AutopilotState"}
   /api/meta:
     get:
       tags: [metadata]
@@ -534,11 +848,15 @@ components:
       properties:
         decoder:
           type: string
-          enum: [rtl_433, meters, adsb, uat, aprs, ais, packet, radiosonde, dsd, none]
+          enum: [rtl_433, meters, adsb, uat, aprs, ais, packet, radiosonde, dsd, sstv, none]
           description: "`none` (or an empty string) stops the running decoder."
         region: {type: string, enum: [us, eu], description: "aprs only: 144.39 MHz (us) or 144.8 MHz (eu)."}
-        freq_hz: {type: integer, description: "packet, dsd, radiosonde. Default: the VFO frequency (radiosonde: search 400-406 MHz). dsd accepts amateur bands only."}
+        freq_hz: {type: integer, description: "packet, dsd, radiosonde, sstv. Default: the VFO frequency (radiosonde: search 400-406 MHz; sstv: 145800000). dsd accepts amateur bands only."}
         baud: {type: integer, enum: [1200, 9600], default: 1200, description: "packet only."}
+        mode:
+          type: string
+          default: auto
+          description: "sstv only: `auto` (VIS detection) or Robot36, PD90, PD120, PD180, Martin1, Scottie1 (case, spaces and dashes ignored; aliases r36, m1, s1). Unknown values give 400."
       example: {decoder: packet, freq_hz: 437800000, baud: 9600}
     DecoderStatus:
       type: object
@@ -562,7 +880,7 @@ components:
           description: A decoder name, or `survey` for survey progress lines.
         kind:
           type: string
-          enum: [message, snapshot, log]
+          enum: [message, snapshot, log, progress, image, pass]
         data:
           type: object
           additionalProperties: true
@@ -576,6 +894,10 @@ components:
             - ais, `message`: `{nmea, type, mmsi, lat?, lon?, sog?, cog?, heading?, name?, callsign?, shiptype?}`.
             - meters, `message`: rtl_433 JSON for your own meters only; `snapshot` (every 5 s): `{own_ids, other_meters_heard}`.
             - radiosonde, `message`: rs1729 JSON plus freq_hz (type, id, frame, datetime, lat, lon, alt, vel_h, heading, vel_v, sats, temp?, humidity?, pressure?, batt?).
+            - sstv: `progress` `{mode, lines, total_lines, url}` (about 1/s while receiving); `image` `{mode, width, height, lines, url, path, started, duration_s, freq_hz, satellite?}`; `log` `{line}`. `url` is a path under /api/files/sstv/.
+            - scanner, `message`: `{freq_hz, label, start, duration_s, peak_db, mode}` per finished transmission.
+            - transcribe, `message`: a Transcript entry.
+            - autopilot: `log` `{line}`; `pass` at LOS with an AutopilotEntry.
             - dsd, `message`: `{line, mode?, tgt?, src?, color_code?, encrypted?}`. Encrypted traffic is never decrypted.
       example:
         id: 17
@@ -982,6 +1304,195 @@ components:
         downlinks:
           type: array
           items: {$ref: "#/components/schemas/SatelliteDownlink"}
+    ScannerRequest:
+      type: object
+      properties:
+        band: {type: string, description: "Catalog band id. Alternative to lo_hz/hi_hz."}
+        region: {type: string, enum: [us, eu], description: "Selects the band's region edges."}
+        lo_hz: {type: integer}
+        hi_hz: {type: integer, description: "Above lo_hz; range at most 30 MHz within 24-1766 MHz."}
+        mode: {type: string, enum: [nfm, am, usb, lsb], description: "Default: the band's mode; required without a band."}
+        bandwidth_hz: {type: number, minimum: 500, maximum: 200000}
+        step_hz: {type: integer, minimum: 100, maximum: 1000000, description: "Channel raster. Default am 25000, nfm 12500 (pmr446 6250), usb/lsb 1000."}
+        margin_db: {type: number, minimum: 3, maximum: 40, default: 10}
+        hang_s: {type: number, minimum: 0.2, maximum: 60, default: 2}
+        dwell_ms: {type: integer, minimum: 200, maximum: 30000, default: 1500}
+        max_tx_s: {type: number, minimum: 5, maximum: 3600, default: 120, description: "Bins active longer are folded into the baseline."}
+        lockout_hz: {type: array, items: {type: integer}}
+        priority_hz: {type: array, items: {type: integer}, description: "Channels that may interrupt a lock."}
+      example: {band: air, mode: am, step_hz: 25000, margin_db: 10, lockout_hz: [132150000], priority_hz: [121500000]}
+    ScannerTx:
+      type: object
+      properties:
+        freq_hz: {type: integer}
+        label: {type: string}
+        start: {type: number, description: "Unix seconds."}
+        duration_s: {type: number}
+        peak_db: {type: number}
+    ScannerState:
+      type: object
+      properties:
+        state: {type: string, enum: [idle, watching, locked, stopped]}
+        band: {type: string, description: "Omitted for a custom range."}
+        lo_hz: {type: integer}
+        hi_hz: {type: integer}
+        mode: {type: string}
+        bandwidth_hz: {type: number}
+        step_hz: {type: integer}
+        margin_db: {type: number}
+        hang_s: {type: number}
+        dwell_ms: {type: integer}
+        max_tx_s: {type: number}
+        window:
+          type: object
+          properties:
+            center_hz: {type: integer}
+            lo_hz: {type: integer}
+            hi_hz: {type: integer}
+            index: {type: integer}
+            count: {type: integer}
+        active:
+          type: object
+          description: Present only while `locked`.
+          properties:
+            freq_hz: {type: integer}
+            label: {type: string}
+            since: {type: number}
+            level_db: {type: number}
+        recent:
+          type: array
+          description: Last 100 transmissions, newest first.
+          items: {$ref: "#/components/schemas/ScannerTx"}
+        channels:
+          type: array
+          description: The 50 most active channels of this run, by count.
+          items:
+            type: object
+            properties:
+              freq_hz: {type: integer}
+              label: {type: string}
+              count: {type: integer}
+              total_s: {type: number}
+              last: {type: number}
+        lockout_hz: {type: array, items: {type: integer}}
+        priority_hz: {type: array, items: {type: integer}}
+        started: {type: number}
+        error: {type: string, description: "Set when restoring the radio failed."}
+      example:
+        state: watching
+        band: air
+        lo_hz: 118000000
+        hi_hz: 137000000
+        mode: am
+        recent: []
+        channels: []
+        lockout_hz: []
+        priority_hz: []
+    AutopilotSettings:
+      type: object
+      description: Merge update; only present fields change.
+      properties:
+        enabled: {type: boolean}
+        min_elevation: {type: number, description: "Minimum peak elevation in degrees. Default 20."}
+        satellites: {type: array, items: {type: integer}, description: "NORAD ids; empty = all."}
+        preempt: {type: boolean, description: "Stop a running survey, scanner or decoder for a pass (restored afterwards, survey and scanner are not restarted)."}
+        listen: {type: boolean, description: "VFO follows the downlink with Doppler correction. Default true."}
+        record_iq: {type: boolean, description: "Also record raw IQ (large). Default false."}
+      example: {enabled: true, min_elevation: 20, satellites: [12345]}
+    AutopilotCurrent:
+      type: object
+      properties:
+        norad: {type: integer}
+        name: {type: string}
+        aos: {type: integer}
+        los: {type: integer}
+        max_elevation_deg: {type: number}
+        downlink_hz: {type: integer}
+        decoder: {type: string, enum: [packet, sstv, nfm]}
+        doppler_hz: {type: integer}
+        elevation_deg: {type: number}
+        azimuth_deg: {type: number}
+        packets: {type: integer}
+        images: {type: integer}
+        dir: {type: string, description: "Pass directory name under <data-dir>/passes."}
+    AutopilotNext:
+      type: object
+      properties:
+        norad: {type: integer}
+        name: {type: string}
+        aos: {type: integer}
+        los: {type: integer}
+        max_elevation_deg: {type: number}
+        downlink_hz: {type: integer}
+        decoder: {type: string}
+        baud: {type: integer}
+        will_run: {type: boolean}
+        reason: {type: string, description: "Why it will not run; empty when will_run."}
+    AutopilotEntry:
+      type: object
+      description: A finished or running pass; also the content of pass.json.
+      properties:
+        norad: {type: integer}
+        name: {type: string}
+        aos: {type: integer}
+        los: {type: integer}
+        max_elevation_deg: {type: number}
+        downlink_hz: {type: integer}
+        decoder: {type: string}
+        baud: {type: integer}
+        packets: {type: integer}
+        images: {type: integer}
+        audio: {type: string, description: "File name in the pass directory, e.g. pass.wav."}
+        iq: {type: string, description: "Raw IQ file name, when record_iq was on."}
+        dir: {type: string}
+        state: {type: string, enum: [running, done, stopped, error]}
+        reason: {type: string}
+        started: {type: number}
+        ended: {type: number}
+        manual: {type: boolean, description: "True for passes started with /api/autopilot/run."}
+    AutopilotState:
+      allOf:
+        - {$ref: "#/components/schemas/AutopilotSettings"}
+        - type: object
+          properties:
+            receiver_set: {type: boolean}
+            datasets_ok: {type: boolean, description: "The satnogs and tle datasets are loaded."}
+            current:
+              oneOf:
+                - {$ref: "#/components/schemas/AutopilotCurrent"}
+                - {type: "null"}
+            next:
+              type: array
+              description: Passes of the next 12 hours, including ones that will not run.
+              items: {$ref: "#/components/schemas/AutopilotNext"}
+            history:
+              type: array
+              description: Last 50 passes, read back from the pass directories.
+              items: {$ref: "#/components/schemas/AutopilotEntry"}
+    Transcript:
+      type: object
+      properties:
+        id: {type: string}
+        source: {type: string, enum: [scanner, survey, manual]}
+        freq_hz: {type: integer}
+        label: {type: string}
+        mode: {type: string}
+        start: {type: number, description: "Unix seconds."}
+        duration_s: {type: number}
+        text: {type: string}
+        empty: {type: boolean, description: "Filtered as a hallucination, tag, loop or too sparse."}
+        model: {type: string}
+        latency_s: {type: number}
+        url: {type: string, description: "Path of the clip under /api/files/clips/."}
+      example: {id: "20261121-151248_122900000", source: scanner, freq_hz: 122900000, label: MULTICOM, mode: am, start: 1795295568.2, duration_s: 3.6, text: "Example traffic, left downwind runway one seven", empty: false, model: small.en, latency_s: 0.6, url: /api/files/clips/20261121/151248_122900000.wav}
+    TranscribeStatus:
+      type: object
+      properties:
+        enabled: {type: boolean}
+        model: {type: string}
+        server: {type: string, enum: [running, stopped, error]}
+        queue: {type: integer}
+        last_error: {type: string}
 x-websockets:
   /ws/spectrum:
     summary: Live spectrum frames (server to client).

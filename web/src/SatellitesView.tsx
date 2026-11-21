@@ -3,6 +3,10 @@ import type { Receiver, SatDownlink } from "./api";
 import { useOverhead, usePasses } from "./useSatellites";
 import { DataSources } from "./meta";
 import type { SatOverhead } from "./api";
+import { useAutopilot } from "./useAutopilot";
+import { AutopilotPanel } from "./AutopilotPanel";
+import type { AudioApi } from "./useAudio";
+import type { SstvImage } from "./useSstv";
 
 const mhz = (hz: number) => (hz / 1e6).toFixed(4);
 
@@ -27,9 +31,12 @@ export function SatellitesView(props: {
   onOpenSettings: () => void;
   onListen: (hz: number) => void;
   onDecode: (hz: number, baud: number) => void;
+  audio: AudioApi;
+  sstvImages: SstvImage[];
 }) {
   const { active, receiver } = props;
   const over = useOverhead(active);
+  const ap = useAutopilot(active);
   const passes = usePasses(active, receiver ? `${receiver.lat},${receiver.lon}` : "");
   // 1 s tick for the countdowns only; this component is small and only mounted while the tab is open.
   const [now, setNow] = useState(() => Date.now() / 1000);
@@ -51,10 +58,12 @@ export function SatellitesView(props: {
   );
 
   const noRx = passes.noReceiver;
+  const apNext = ap.state?.enabled ? ap.state.next.filter((n) => n.will_run) : [];
   const upcoming = passes.passes.filter((p) => p.los > now).sort((a, b) => a.aos - b.aos);
 
   return (
     <div className="sat">
+      <AutopilotPanel ap={ap} now={now} passes={passes.passes} images={props.sstvImages} audio={props.audio} onOpenSettings={props.onOpenSettings} />
       <div className="sat-top">
         <div className="sat-over">
           <div className="sat-sec">
@@ -110,7 +119,8 @@ export function SatellitesView(props: {
                 const here = p.aos <= now && p.los > now;
                 return (
                   <tr key={`${p.norad}-${p.aos}`} className={here ? "now" : ""}>
-                    <td>{p.name}{here && <> <span className="badge okb">now</span></>}</td>
+                    <td>{p.name}{here && <> <span className="badge okb">now</span></>}
+                      {apNext.some((n) => n.norad === p.norad && Math.abs(n.aos - p.aos) <= 60) && <> <span className="badge okb" title="The autopilot will handle this pass">auto</span></>}</td>
                     <td>{here ? `LOS ${countdown(p.los - now)}` : countdown(p.aos - now)}</td>
                     <td>{clock(p.aos)}</td>
                     <td>{p.max_elevation_deg.toFixed(0)}</td>

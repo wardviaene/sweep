@@ -11,14 +11,20 @@ import { useAudio } from "./useAudio";
 import { useDemod } from "./useDemod";
 import { useBands } from "./useBands";
 import { useEvents } from "./useEvents";
+import { Toasts } from "./Toasts";
 import { useConfig } from "./useConfig";
 import { ToolsMenu } from "./ToolsMenu";
 import { SettingsMenu } from "./SettingsMenu";
 import { SurveyPanel } from "./SurveyPanel";
+import { ScannerPanel } from "./ScannerPanel";
+import { useScanner } from "./useScanner";
+import { useTranscripts } from "./transcripts";
 import type { LatLon } from "./geo";
 import { fmtMHz } from "./draw";
 import { setDecoder, type DecoderName, type DecoderOpts, type SurveyStep } from "./api";
-import { bandViews, loadRegion, saveRegion, type Band, type BandMode, type Channel } from "./bands";
+import { bandRange, bandViews, loadRegion, saveRegion, type Band, type BandMode, type Channel } from "./bands";
+
+const SCAN_BUSY = "scanner running: stop the scanner to tune manually";
 
 export function App() {
   const { stream, conn, meta, fps } = useSpectrum();
@@ -28,6 +34,7 @@ export function App() {
   const audio = useAudio();
   const { catalog, error: bandsError } = useBands();
   const events = useEvents();
+  const transcripts = useTranscripts(events);
   const config = useConfig();
   const [toolsOpen, setToolsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -36,6 +43,9 @@ export function App() {
   const [step, setStep] = useState(100e3);
   const [regionPref, setRegionPref] = useState<string | null>(loadRegion);
   const [surveyOpen, setSurveyOpen] = useState(false);
+  const [scanOpen, setScanOpen] = useState(false);
+  const scanner = useScanner(scanOpen);
+  const scanning = scanner.running;
   const [surveyLine, setSurveyLine] = useState<string | null>(null);
   const [decFocus, setDecFocus] = useState<{ decoder: DecoderName; seq: number } | null>(null);
   const [decErr, setDecErr] = useState<string | null>(null);
@@ -51,6 +61,13 @@ export function App() {
     saveRegion(r);
   };
   const views = useMemo(() => bandViews(catalog, region), [catalog, region]);
+
+  const sw = scanner.state?.window ?? null;
+  const scanAct = scanner.state?.state === "locked" ? (scanner.state.active?.freq_hz ?? null) : null;
+  const scanOverlay = useMemo(
+    () => (scanning && sw ? { lo_hz: sw.lo_hz, hi_hz: sw.hi_hz, active_hz: scanAct } : null),
+    [scanning, sw?.lo_hz, sw?.hi_hz, scanAct], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   const d = status?.demod;
   const vfo: Vfo | null = useMemo(
@@ -81,6 +98,7 @@ export function App() {
   // Jump: with a demodulator, park the center a quarter span below the target so the VFO
   // sits off the DC spike (same offset sdrd uses), then set the VFO. Otherwise just tune.
   const jump = (b: Band) => {
+    if (scanning) return fail(new Error(SCAN_BUSY));
     const hz = Math.round(b.tune_mhz * 1e6);
     if (b.mode === "none") return tuner.setFreq(hz);
     const r = status?.sample_rate ?? 2.048e6;
@@ -104,9 +122,20 @@ export function App() {
       if (ok) demod.send({ mode, freq_hz: hz }, true);
     });
   };
+  const scanBand = (b: Band) => {
+    const [lo, hi] = bandRange(b, region);
+    setScanOpen(true);
+    void scanner.start({ band: b.id, lo_hz: Math.round(lo * 1e6), hi_hz: Math.round(hi * 1e6), mode: b.mode });
+  };
+  const scanListen = (hz: number, mode: string) => {
+    void scanner.stop().then((ok) => {
+      if (ok) surveyListen(hz, mode as BandMode);
+    });
+  };
   const antennas = catalog?.antennas ?? [];
   const antenna = antennas.find((a) => a.id === config.antenna) ?? null;
   const pickChannel = (_b: Band, c: Channel) => {
+    if (scanning) return fail(new Error(SCAN_BUSY));
     const hz = Math.round(c.mhz * 1e6);
     if (c.mode !== "none") demod.send({ mode: c.mode, freq_hz: hz }, true);
     else tuner.setFreq(hz);
@@ -118,11 +147,12 @@ export function App() {
       if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
       e.preventDefault();
+      if (scanning) return;
       tuner.shiftFreq((e.key === "ArrowRight" ? 1 : -1) * step * (e.shiftKey ? 10 : 1));
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tuner, step]);
+  }, [tuner, step, scanning]);
 
   return (
     <div className="app">
@@ -148,11 +178,14 @@ export function App() {
           cls={error ? "conn-closed" : undefined}
         />
       </header>
-      <Controls status={status} centerHz={status?.center_hz ?? center} tuner={tuner} step={step} setStep={setStep}>
+      <Controls status={status} centerHz={status?.center_hz ?? center} tuner={tuner} step={step} setStep={setStep} locked={scanning}>
         <button className="primary" onClick={() => setSurveyOpen(true)} title="Run a short survey to see what you can receive with your antenna">
           ◎ What's on the air?
         </button>
-        <DemodControls status={status} demod={demod} audio={audio} />
+        <button className={scanOpen || scanning ? "on" : ""} onClick={() => setScanOpen(!scanOpen)} title="Watch a band and jump to each voice transmission">
+          ⟲ Scanner{scanning ? " ●" : ""}
+        </button>
+        <DemodControls status={status} demod={demod} audio={audio} locked={scanning} transcripts={transcripts} />
         <ToolsMenu status={status} bandViews={views} tuner={tuner} demod={demod} open={toolsOpen} setOpen={setToolsOpen} />
         <SettingsMenu config={config} open={settingsOpen} setOpen={setSettingsOpen} mapCenter={mapCenter} antennas={antennas} />
       </Controls>
@@ -169,6 +202,7 @@ export function App() {
           error={actErr}
           antenna={antenna}
           onOpenSettings={() => setSettingsOpen(true)}
+          onScan={scanBand}
         />
         <div className="center">
           <SpectrumView
@@ -176,10 +210,23 @@ export function App() {
             meta={meta}
             bandViews={views}
             vfo={vfo}
-            onSetVfo={(hz) => demod.send({ freq_hz: hz })}
-            onTuneHz={tuner.setFreq}
-            onWheel={(dir) => tuner.shiftFreq(dir * step)}
+            scan={scanOverlay}
+            onSetVfo={(hz) => (scanning ? fail(new Error(SCAN_BUSY)) : demod.send({ freq_hz: hz }))}
+            onTuneHz={(hz) => (scanning ? fail(new Error(SCAN_BUSY)) : tuner.setFreq(hz))}
+            onWheel={(dir) => (scanning ? undefined : tuner.shiftFreq(dir * step))}
           />
+          {scanOpen && (
+            <ScannerPanel
+              scanner={scanner}
+              audio={audio}
+              catalog={catalog}
+              region={region}
+              events={events}
+              transcripts={transcripts}
+              onListen={scanListen}
+              onClose={() => setScanOpen(false)}
+            />
+          )}
           <DecoderPanel
             status={status}
             events={events}
@@ -195,9 +242,12 @@ export function App() {
             onOpenSurvey={() => setSurveyOpen(true)}
             focus={decFocus}
             onListen={(hz) => surveyListen(hz, "nfm")}
+            audio={audio}
+            transcripts={transcripts}
           />
         </div>
       </div>
+      <Toasts events={events} />
       <SurveyPanel
         open={surveyOpen}
         onClose={() => setSurveyOpen(false)}
@@ -210,6 +260,7 @@ export function App() {
         audioOn={audio.on}
         onAudioToggle={audio.toggle}
         onTune={tuner.setFreq}
+        transcripts={transcripts}
       />
     </div>
   );

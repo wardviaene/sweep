@@ -4,7 +4,7 @@
 
 A machine-readable description of the REST endpoints is in [`openapi.yaml`](openapi.yaml) (OpenAPI 3.1; the WebSockets are described there in the `x-websockets` extension).
 
-Contents: [Overview](#overview) · [Security](#security) · [Endpoint index](#endpoint-index) · [REST endpoints](#rest-endpoints) · [WebSocket streams](#websocket-streams) · [Decoders and event shapes](#decoders-and-event-shapes) · [Metadata](#metadata) · [Survey](#survey-contract) · [Client examples](#client-examples) · [Privacy](#privacy-notes)
+Contents: [Overview](#overview) · [Security](#security) · [Endpoint index](#endpoint-index) · [REST endpoints](#rest-endpoints) · [WebSocket streams](#websocket-streams) · [Decoders and event shapes](#decoders-and-event-shapes) · [Metadata](#metadata) · [Scanner](#scanner) · [SSTV and files](#sstv-and-files) · [Pass autopilot](#pass-autopilot) · [Transcription](#transcription) · [Survey](#survey-contract) · [Client examples](#client-examples) · [Privacy](#privacy-notes)
 
 ## Overview
 
@@ -27,8 +27,22 @@ Contents: [Overview](#overview) · [Security](#security) · [Endpoint index](#en
   - There is one center frequency / sample rate / gain for everybody. A tune by any client affects every client and the waterfall.
   - **One decoder at a time.** Starting a decoder stops the running one and retunes the radio to what the new one needs. Retuning the center frequency while a decoder runs is allowed but usually breaks decoding.
   - **Scan, record and survey are exclusive.** They share one lock. A second one fails with 409 (record, survey) or 400 (scan). A scan also refuses to start while a decoder runs; a survey stops the running decoder and restores it afterwards.
+  - **The scanner and the pass autopilot also own the radio** while they run. Manual `POST /api/tune`, `/api/demod` and `/api/decoder` then return **409** (`scanner running`, or `autopilot pass in progress`); `POST /api/survey` returns 409 while an autopilot pass runs, and a scan or recording is refused (400 and 409 respectively).
   - **One listening demodulator** (the "VFO") runs alongside the spectrum. Its audio is broadcast to every `/ws/audio` client.
 - Spectrum frames keep flowing while a decoder, a demodulator or a scan runs.
+
+## Daemon flags used in this document
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-addr` | `127.0.0.1:8073` | HTTP listen address |
+| `-db-dir` | `~/.local/share/sweep/db` | Metadata datasets, read offline |
+| `-data-dir` | `~/.local/share/sweep` | Files sdrd produces: `sstv/` pictures and `passes/` records (served via `/api/files/{kind}/{name}`) |
+| `-record-dir` | `recordings` | IQ files of `POST /api/record` |
+| `-config` | `~/.config/sweep/config.json` | Local config file |
+| `-synth`, `-synth-fm FREQ:file.wav`, `-synth-burst FREQ:ON:OFF[:AMP]` | off | Testing without a dongle. `-synth` uses a synthetic IQ source; `-synth-fm` loops a 16-bit WAV as FM at FREQ; **`-synth-burst`** adds a carrier at FREQ keyed on for ON seconds and off for OFF seconds (`OFF` 0 = continuous), optional amplitude AMP; repeatable. Useful for exercising the scanner. |
+| `-transcribe`, `-whisper-model`, `-whisper-bin` | `auto` | Local speech transcription, see [Transcription](#transcription) |
+| `-iq FILE` | | Play back a `.cu8` recording instead of the dongle |
 
 ## Security
 
@@ -63,6 +77,21 @@ Contents: [Overview](#overview) · [Security](#security) · [Endpoint index](#en
 | POST | `/api/survey` | Start a "what is on the air?" survey |
 | GET | `/api/survey` | Survey progress and results |
 | POST | `/api/survey/stop` | Stop the survey after the current step |
+| POST | `/api/scanner` | Start (or reconfigure) the transmission scanner |
+| GET | `/api/scanner` | Scanner state |
+| POST | `/api/scanner/stop` | Stop the scanner and restore the radio |
+| POST | `/api/scanner/lockout` | Add or remove a locked-out channel |
+| GET | `/api/files/{kind}/{name}` | Read-only access to SSTV pictures and pass records |
+| GET | `/api/files/passes/{dir}/{name}` | A file inside one autopilot pass directory |
+| GET | `/api/transcripts` | Recent voice transcripts |
+| GET | `/api/transcribe` | Transcription status |
+| PUT | `/api/transcribe` | Switch transcription on or off |
+| POST | `/api/transcribe` | Transcribe the live audio or an existing WAV now |
+| GET | `/api/files/clips/{date}/{name}` | A recorded voice clip |
+| GET | `/api/autopilot` | Pass autopilot state, upcoming passes, history |
+| PUT | `/api/autopilot` | Change autopilot settings |
+| POST | `/api/autopilot/run` | Handle a satellite's current pass now |
+| POST | `/api/autopilot/stop` | End the current pass early |
 | GET | `/api/meta` | Which metadata datasets are loaded |
 | GET | `/api/meta/aircraft/{hex}` | Offline lookup: country, registration, type, year of a Mode S address |
 | GET | `/api/meta/callsign/{callsign}` | Offline lookup: airline and flight number of a callsign |
@@ -236,10 +265,11 @@ Start a decoder (stopping any running one) or stop it with `"none"`. Returns the
 
 | Field | Type | Required | Default | Notes |
 |---|---|---|---|---|
-| `decoder` | string | yes | | `rtl_433`, `meters`, `adsb`, `uat`, `aprs`, `ais`, `packet`, `radiosonde`, `dsd`, or `none`. An empty string also stops. |
+| `decoder` | string | yes | | `rtl_433`, `meters`, `adsb`, `uat`, `aprs`, `ais`, `packet`, `radiosonde`, `dsd`, `sstv`, or `none`. An empty string also stops. |
 | `region` | string | no | | `us` or `eu`. Only used by `aprs` (144.39 MHz in `us`, 144.8 MHz in `eu`; anything but `eu` is treated as US). |
-| `freq_hz` | integer | no | the VFO frequency | Used by `packet`, `dsd`, `radiosonde`. |
+| `freq_hz` | integer | no | the VFO frequency | Used by `packet`, `dsd`, `radiosonde`, `sstv` (default 145800000). |
 | `baud` | integer | no | 1200 | `packet` only: 1200 or 9600. |
+| `mode` | string | no | `auto` | `sstv` only: `auto` (detect from the VIS header) or `Robot36`, `PD90`, `PD120`, `PD180`, `Martin1`, `Scottie1`. Case, spaces and dashes are ignored (`robot 36`, `martin-1`); aliases `r36`, `m1`, `s1`. An unknown mode is a 400. |
 
 What each decoder tunes to and runs is in [Decoders and event shapes](#decoders-and-event-shapes). The call returns after about 1.5 seconds (up to about 8 seconds for `radiosonde` without `freq_hz`, which searches 400-406 MHz first), or earlier if the decoder fails immediately. A decoder that survives that window is reported as started; later failures are visible in `status.decoder.error` and as `log` events.
 
@@ -259,7 +289,7 @@ What each decoder tunes to and runs is in [Decoders and event shapes](#decoders-
 | `last_event_ts` | Unix time (seconds) of the latest event from this run, `0` if none. |
 | `error` | Present when the last run ended with an error. |
 
-Errors: 400 for an unknown decoder name (the message lists the valid names), a missing external tool (`rtl_433 not found ...`), `packet` with a `baud` other than 1200/9600 or without a frequency and no VFO, `dsd` without a frequency or **outside the amateur bands** (50-54, 144-148, 222-225, 420-450, 902-928, 1240-1300 MHz), a radiosonde search that finds no carrier, or a tune failure. 409 while a survey is running.
+Errors: 400 for an unknown decoder name (the message lists the valid names), a missing external tool (`rtl_433 not found ...`), `packet` with a `baud` other than 1200/9600 or without a frequency and no VFO, `dsd` without a frequency or **outside the amateur bands** (50-54, 144-148, 222-225, 420-450, 902-928, 1240-1300 MHz), a radiosonde search that finds no carrier, or a tune failure. 409 while a survey is running, while the scanner runs, or during an autopilot pass.
 
 ```bash
 curl -s -X POST http://127.0.0.1:8073/api/decoder -d '{"decoder":"rtl_433"}'
@@ -474,6 +504,223 @@ Satellites above the horizon right now.
 - `packet` events gain `satellite` (`{norad, name}`).
 - Peaks from `/api/peaks`, `/api/scan` and survey scan steps gain `label`.
 
+## Scanner
+
+Voice traffic (air traffic control, repeaters, walkie-talkies, marine) comes in short bursts on otherwise silent channels. The scanner watches a frequency range and points the listening VFO at any carrier that **newly** appears, holds it while it lasts (plus a hang time), then waits silently for the next. Always-on carriers (interference, birdies, continuous broadcasts) become part of the baseline and are ignored. The audio goes out on [`/ws/audio`](#ws-audio).
+
+- **Windows.** The range is covered by windows of 80% of the **current sample rate** (about 1.64 MHz at 2.048 MS/s). A range that fits one window is watched from that window; otherwise the scanner cycles through the windows, staying `dwell_ms` in each while idle (double dwell for 60 s after activity in a window).
+- **Baseline.** Per window and per bin, a power baseline that **falls fast (time constant about 3 s) and rises slowly (about 20 s)**, updated only while the bin is not active. It is kept per window across visits, and seeded on the first visit of a window from the minimum of the first 500 ms (so a transmission already on air does not become baseline). Bins at least `margin_db` above their baseline are active; an active peak at a channel frequency (rounded to `step_hz`) is a **transmission start**.
+- **Lock.** On a start the scanner sets the VFO to that channel (`mode`, `bandwidth_hz`) with squelch at baseline + `margin_db`/2, stops cycling, and stays while the channel stays active. After `hang_s` of quiet the transmission ends, the VFO goes silent and watching resumes. While idle the VFO stays on with the squelch held closed (+10 dB), so you hear nothing instead of a parked frequency.
+- **Priority.** While locked, a stronger new transmission in the same window does not interrupt, except on channels in `priority_hz`.
+- **Ignored.** Crystal spurs (multiples of 28.8 MHz), carriers within 10 kHz of the window center (DC), `lockout_hz` entries (plus or minus `step_hz`/2), and bins active longer than `max_tx_s`, which are folded into the baseline as continuous signals.
+- **Exclusive.** Like a survey: starting it stops a running decoder, and it is refused (409) while a survey, scan or recording runs. Stopping restores the previous tuning, VFO and decoder. While it runs, manual tune/demod/decoder requests return 409 `scanner running`.
+
+### POST /api/scanner
+
+Starts the scanner, or reconfigures a running one (the saved radio state is kept). Empty body: 400 unless a range is given. Request body limit is 16 KiB.
+
+| Field | Type | Default | Range / notes |
+|---|---|---|---|
+| `band` | string | | Catalog band id (see [GET /api/bands](#get-apibands)). Its region edges and `mode` are used unless overridden. |
+| `region` | string | catalog default | `us` or `eu`; selects the band's region edges. |
+| `lo_hz`, `hi_hz` | integer | from `band` | Give a band **or** both. Within 24-1766 MHz, `hi_hz` above `lo_hz`, at most 30 MHz wide. Explicit values override band edges. |
+| `mode` | string | band mode | `nfm`, `am`, `usb`, `lsb`. Required without a band. |
+| `bandwidth_hz` | number | mode default | 500 to 200000. |
+| `step_hz` | integer | `am` 25000, `nfm` 12500 (`pmr446` band: 6250), `usb`/`lsb` 1000 | 100 to 1000000. Channel raster. |
+| `margin_db` | number | 10 | 3 to 40. Dynamic detection threshold above baseline. |
+| `hang_s` | number | 2 | 0.2 to 60. |
+| `dwell_ms` | integer | 1500 | 200 to 30000. |
+| `max_tx_s` | number | 120 | 5 to 3600. |
+| `lockout_hz` | integer[] | `[]` | Channels to skip; merged with the lockouts remembered for the band. |
+| `priority_hz` | integer[] | `[]` | Channels that may interrupt a lock. |
+
+```bash
+curl -s -X POST http://127.0.0.1:8073/api/scanner -d '{"band":"air"}'
+curl -s -X POST http://127.0.0.1:8073/api/scanner -d '{"lo_hz":462550000,"hi_hz":462725000,"mode":"nfm"}'
+```
+
+Returns **202** with the state. Errors: 400 for invalid fields or a range outside the limits (the message names the field); 409 if a survey, scan or recording runs (`another scan, recording or survey is running`) or an autopilot pass is in progress.
+
+### GET /api/scanner
+
+```json
+{"state": "watching", "band": "air", "lo_hz": 118000000, "hi_hz": 137000000, "mode": "am", "bandwidth_hz": 8000,
+ "step_hz": 25000, "margin_db": 10, "hang_s": 2, "dwell_ms": 1500, "max_tx_s": 120,
+ "window": {"center_hz": 118820000, "lo_hz": 118000000, "hi_hz": 119640000, "index": 0, "count": 12},
+ "active": {"freq_hz": 119250000, "label": "", "since": 1795300000.4, "level_db": -41.2},
+ "recent": [{"freq_hz": 119250000, "label": "", "start": 1795299990.1, "duration_s": 4.2, "peak_db": -38.0}],
+ "channels": [{"freq_hz": 119250000, "label": "", "count": 7, "total_s": 21.5, "last": 1795300000.4}],
+ "lockout_hz": [132150000], "priority_hz": [121500000], "started": 1795299000}
+```
+
+- `state`: `idle` (never started) | `watching` | `locked` (a transmission is playing) | `stopped`. The parameter fields (`band` through `max_tx_s`) echo the effective settings (omitted when empty); `band` is omitted for a custom range. `error` is set when restoring the radio failed.
+- `window` is the span being watched; `active` is present only while `locked`.
+- `recent` is the last 100 transmissions, newest first. `channels` is the 50 most active channels of this run, by count. `label` comes from the band catalog or [metadata](#metadata) and is `""` when unknown.
+- `lockout_hz` and `priority_hz` are always arrays.
+
+### POST /api/scanner/stop
+
+Stops the scanner, restores the previous tuning, VFO and decoder, and returns the final state (`stopped`). Also 200 when nothing runs.
+
+### POST /api/scanner/lockout
+
+`{"freq_hz": 132150000}` adds a lockout, `{"freq_hz": 132150000, "remove": true}` removes it. Applies to the running scanner and is remembered per band in the local config (`scanner_lockouts`). Returns the state. Errors: 400 for invalid JSON or frequency, **409 `scanner not running`** when no scanner runs.
+
+## SSTV and files
+
+Slow-scan TV turns FM audio into pictures; the ISS (145.800 MHz) runs SSTV events and some CubeSats send images. sdrd decodes it natively in Go, with no external tools. Start it with `POST /api/decoder {"decoder": "sstv"}`; it stays armed and decodes every picture it hears.
+
+- **Modes:** Robot 36, PD 90, PD 120, PD 180, Martin 1, Scottie 1 (names `Robot36`, `PD90`, `PD120`, `PD180`, `Martin1`, `Scottie1`). The mode is normally detected from the VIS header; with `mode` set it decodes without a VIS and syncs on line pulses.
+- **Input:** a private 25 kHz raw NFM demodulator, resampled to 11025 Hz; luminance maps linearly from 1500-2300 Hz and lines are re-synced on the 1200 Hz pulse with slant correction.
+- **Events:** see [event shapes](#decoders-and-event-shapes) (`progress`, `image`, `log`). The `url` of an event is a path on the same server, served by the endpoint below. The PNG is rewritten atomically as lines arrive, so you can poll it for a live preview.
+- Pictures are written to `<data dir>/sstv/` (`sdrd -data-dir`, default `~/.local/share/sweep`; never inside the repository).
+
+### GET /api/files/{kind}/{name}
+
+Read-only access to files sdrd writes.
+
+| Path part | Values |
+|---|---|
+| `kind` | `sstv` (SSTV pictures) or `passes` (plain files directly in the autopilot's `passes/` directory; per-pass files use the next endpoint). Anything else: 404 JSON error. |
+| `name` | A plain file name matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` (no separators, no leading dot, no `..`). Otherwise 400 `invalid file name`. |
+
+Only **regular files directly in the kind's directory** are served (symbolic links are not followed, subdirectories are not reachable through this route). A missing file gives 404 `no such file`. The `Content-Type` comes from the extension: `.png` image/png, `.jpg`/`.jpeg` image/jpeg, `.json` application/json, `.txt` text/plain, `.wav` audio/wav, anything else application/octet-stream. Responses carry `X-Content-Type-Options: nosniff` and `Cache-Control: no-cache`, and support range requests.
+
+```bash
+curl -s -o picture.png http://127.0.0.1:8073/api/files/sstv/20261121-151200_pd120.png
+```
+
+### GET /api/files/passes/{dir}/{name}
+
+A regular file inside one autopilot pass directory: `pass.json`, `pass.wav`, `image-NN.png`, `packets.jsonl` (and the `.cu8` IQ file). `dir` is the pass directory name (the `dir` field of the autopilot API) and `name` the file; **both** must match the plain-name regex above. An invalid `dir` or `name` gives 400 (`invalid pass directory` / `invalid file name`); a missing pass or file gives 404 (`no such pass` / `no such file`). Same content types and headers as above; symbolic links are not followed.
+
+```bash
+curl -s http://127.0.0.1:8073/api/files/passes/20261121-120000_12345_EXAMPLESAT-1/pass.json
+```
+
+## Pass autopilot
+
+When enabled, sdrd watches upcoming satellite passes and handles each qualifying pass by itself. It needs the receiver location (`PUT /api/config`) and the `satnogs` and `tle` [metadata](#metadata) datasets.
+
+- **Qualifying pass:** maximum elevation at least `min_elevation` (default 20 degrees), the satellite listed in `satellites` (NORAD ids; empty means all), and at least one downlink sdrd can use: a `packet` transmitter (AFSK 1200 or GFSK/GMSK/FSK 9600 AX.25), SSTV (mode `SSTV`, or the ISS on 145.800 MHz, using the `sstv` decoder) or FM voice (`nfm`, recorded). With several usable downlinks it prefers packet, then SSTV, then FM. Of overlapping passes it takes the highest maximum elevation; the others are logged as skipped.
+- **Radio ownership.** If the radio is idle (no survey, scanner, scan or recording, no decoder; a VFO the user is listening on is fine) the autopilot takes it from AOS minus 30 s to LOS plus 10 s, then restores the previous tuning, VFO and decoder. If something is running, the pass is skipped with a reason, unless `preempt` is true: then the autopilot stops the survey, scanner or decoder and **restores only the tuning, VFO and decoder** afterwards; a preempted survey or scanner is **not restarted**. During a pass, manual tune/demod/decoder, survey and scanner starts return 409 `autopilot pass in progress`.
+- **Doppler.** The center frequency is fixed at `downlink - sample_rate/4` for the whole pass; the decoder channel and the VFO (when listening) are retuned every second to `downlink + doppler(t)`, computed with SGP4 for the receiver.
+- **Recordings.** Each pass goes to `<data dir>/passes/<YYYYmmdd-HHMMSS>_<norad>_<name>/` (a numeric suffix on collisions) with:
+  - `pass.json`: the history entry, plus `started`, `ended` (Unix seconds), `manual` (true for `POST /api/autopilot/run`), `iq` (file name), `downlink_hz` and `baud`;
+  - `packets.jsonl`: decoded packets (packet passes), one JSON event `data` per line;
+  - `pass.wav`: FM audio (voice downlinks);
+  - `image-NN.png`: SSTV pictures (copied from the SSTV directory);
+  - a `.cu8` raw IQ file when `record_iq` is on (large, off by default).
+
+  Fetch these files with [`GET /api/files/passes/{dir}/{name}`](#get-apifilespassesdirname); the `dir` fields of API responses name the directory relative to `passes/`. SSTV pictures decoded during a pass are also available under `/api/files/sstv/`.
+- **Live audio.** With `listen` (default true) the VFO follows the downlink with Doppler correction (NFM, squelch off), so you hear the pass on `/ws/audio`.
+
+### GET /api/autopilot
+
+```json
+{"enabled": true, "min_elevation": 20, "satellites": [], "preempt": false, "listen": true, "record_iq": false,
+ "receiver_set": true, "datasets_ok": true,
+ "current": {"norad": 12345, "name": "EXAMPLESAT-1", "aos": 1795300000, "los": 1795300600, "max_elevation_deg": 62,
+             "downlink_hz": 145800000, "decoder": "sstv", "doppler_hz": -2310, "elevation_deg": 41.2, "azimuth_deg": 201.0,
+             "packets": 0, "images": 1, "dir": "20261121-151200_12345_EXAMPLESAT-1"},
+ "next": [{"norad": 12345, "name": "EXAMPLESAT-1", "aos": 1795303600, "los": 1795304200, "max_elevation_deg": 35,
+           "downlink_hz": 436500000, "decoder": "packet", "baud": 9600, "will_run": true, "reason": ""}],
+ "history": [{"norad": 12345, "name": "EXAMPLESAT-1", "aos": 1795290000, "los": 1795290600, "max_elevation_deg": 48,
+              "downlink_hz": 436500000, "decoder": "packet", "baud": 9600, "packets": 14, "images": 0, "audio": "pass.wav",
+              "dir": "20261121-120000_12345_EXAMPLESAT-1", "state": "done", "reason": "",
+              "started": 1795289970.2, "ended": 1795290610.5}]}
+```
+
+- `datasets_ok` is true when both the `satnogs` and `tle` datasets are loaded; `receiver_set` when a receiver location is configured. Without both, `next` is empty.
+- `current` is `null` unless a pass is being handled. `decoder` is `packet`, `sstv` or `nfm`.
+- `next` covers the next 12 hours and **includes passes that will not run** (`will_run: false`, with a `reason` such as "autopilot disabled", "overlaps EXAMPLESAT-2 (max elevation 71°)" or "radio busy: decoder rtl_433 running"). `will_run: true` entries have an empty `reason`.
+- `history` keeps the last 50 passes and survives restarts (it is read back from the pass directories). Entry `state`: `running` | `done` | `stopped` | `error`; `reason` explains skips and errors. `audio` and `iq` are file names inside the pass directory (empty or omitted when absent); `started`, `ended`, `manual` are omitted when 0/false.
+
+### PUT /api/autopilot
+
+Merge update of any of `enabled` (bool), `min_elevation` (number), `satellites` (integer array), `preempt` (bool), `listen` (bool), `record_iq` (bool). Persisted in the local config under `autopilot`. Returns the state. Errors: 400 for invalid JSON or wrongly typed values.
+
+### POST /api/autopilot/run
+
+`{"norad": 12345}` handles that satellite's **current** pass right now (it must be above the horizon), regardless of elevation or the satellite list. For trying things out. Returns **202** with the `current` object. Errors: 400 for a missing `norad` (`norad is required`), a satellite that is not above the horizon, one without a usable downlink, or missing satellite data (`no satellite data (set the receiver location and fetch the metadata)`); 409 when the radio is busy (`radio busy`, or a message naming what is running) and `preempt` is off.
+
+### POST /api/autopilot/stop
+
+Ends the current pass early (history state `stopped`) and returns the autopilot state. Also 200 when no pass runs.
+
+## Transcription
+
+sdrd can turn voice transmissions into text with [whisper.cpp](https://github.com/ggerganov/whisper.cpp) running on the same machine. No audio or text leaves the computer.
+
+**Setup.** `brew install whisper-cpp`, then `make whisper-model` (downloads `ggml-small.en.bin`, about 490 MB, to `~/.local/share/sweep/models`). `sdrd` starts `whisper-server` as a child process on `127.0.0.1` (private port, `-t 4 -sns -l en`, model loaded once) **on demand** when the first clip arrives, and stops it on exit. Daemon flags:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-transcribe` | `auto` | `auto` (on when the model file exists), `on`, `off`. `PUT /api/transcribe` overrides it and is saved in the config. |
+| `-whisper-model` | `~/.local/share/sweep/models/ggml-small.en.bin` | Model file |
+| `-whisper-bin` | `whisper-server` | Server binary |
+
+**What is transcribed.**
+- Every transmission the **scanner** locks onto. Clip capture starts when the scanner locks and includes the 0.3 s before it, up to the end of the transmission without the hang time. **Known limitation:** the lock happens after the carrier is detected, so the first words of a transmission can be missed.
+- **Survey listen holds** (`listened` steps).
+- On request through `POST /api/transcribe`.
+
+Clips shorter than 0.5 s and near-silent clips are skipped.
+
+**Processing.** Clips are resampled to 16 kHz mono 16-bit, band-passed 300-3400 Hz, normalized, and stored as `<data-dir>/clips/<YYYYmmdd>/<HHMMSS>_<freq>.wav` (`-2`, `-3`... on a name collision). Each clip is POSTed to the local whisper-server `/inference` (multipart `file`, `response_format=json`, `temperature=0`) with an initial prompt of band-specific vocabulary (aviation, ham, FRS, marine). Clips are transcribed one at a time in order; the queue holds 50 and drops the oldest, logging it. A filter marks results `empty: true` when they are known Whisper hallucinations on noise ("Thank you."), bracketed sound tags, repetition loops, or fewer than 0.4 characters per second for clips of 3 s or more. **Retention:** the newest 500 clips or 7 days, whichever is smaller; older clips and transcripts are deleted. Transcripts are kept in memory and in `clips/index.jsonl`.
+
+**Events.** `/ws/events`, `decoder: "transcribe"`, `kind: "message"`:
+
+```json
+{"id": "20261121-151248_122900000", "source": "scanner", "freq_hz": 122900000, "label": "MULTICOM",
+ "mode": "am", "start": 1795295568.2, "duration_s": 3.6, "text": "Example traffic, left downwind runway one seven",
+ "empty": false, "model": "small.en", "latency_s": 0.6, "url": "/api/files/clips/20261121/151248_122900000.wav"}
+```
+
+`source` is `scanner`, `survey` or `manual`.
+
+### GET /api/transcripts
+
+Returns a JSON **array** of transcript entries (shape above), newest first. Always 200, with `[]` when transcription is unavailable or nothing matches.
+
+| Query | Type | Default | Notes |
+|---|---|---|---|
+| `since` | number | 0 | Only entries whose `start` (Unix seconds) is greater. Not an event id. 400 if not a number. |
+| `limit` | integer | 100 | 1 to 1000. |
+| `freq_hz` | integer | 0 (any) | Exact frequency match, 0 to 2e9. |
+| `q` | string | | Case-insensitive substring match on `text` and `label`. |
+
+### GET /api/transcribe
+
+```json
+{"enabled": true, "model": "small.en", "server": "stopped", "queue": 0, "last_error": ""}
+```
+
+`server` is `running`, `stopped` or `error`. When transcription is not available at all: `enabled` false, `server` `stopped`, `last_error` `transcription is not available`.
+
+### PUT /api/transcribe
+
+`{"enabled": true|false}` (required). Saved in the config under `transcribe`. Returns the status. Errors: 400 without a boolean `enabled`, or if switching on fails (for example the model is missing); 409 when transcription is not available.
+
+### POST /api/transcribe
+
+Transcribes now and **blocks** until the result is ready. Give one of:
+
+| Field | Type | Notes |
+|---|---|---|
+| `seconds` | number | 1 to 60. Records the current listening VFO (its frequency and mode) for that long. Needs the VFO on (`POST /api/demod`). |
+| `path` | string | A WAV file inside the data directory (absolute, or relative to it, for example `clips/20261121/151248_122900000.wav`). Anything outside it is a 400. |
+
+Returns the transcript entry (200), or `{"text": "", "empty": true, "skipped": "<reason>"}` when nothing was transcribed (`shorter than 0.5 s`, `near-silent audio`, `queue full`). Errors: 400 for neither field or an invalid one, or a bad `path` (outside the data dir, missing, not a usable WAV); 409 when transcription is off or not available, the VFO is off, or the audio changed while recording.
+
+### GET /api/files/clips/{date}/{name}
+
+A recorded clip as `audio/wav` (with `nosniff`). `date` must be 8 digits (`YYYYmmdd`) and `name` must match `HHMMSS_<freq>[-N].wav`; otherwise (or when transcription is unavailable) a plain-text 404. A missing file gives a JSON 404. Symbolic links are not followed.
+
+**sdrctl:** `sdrctl transcripts [-q text] [-freq 122.9M] [-limit 100] [-follow]`, `sdrctl transcribe <seconds>`, `sdrctl transcribe <WAV path>`, `sdrctl transcribe on|off`, `sdrctl transcribe status`.
+
+**Privacy.** Clips can contain other people's transmissions. They stay in the data directory on this machine, are subject to the retention rule, and are never uploaded by sdrd. Remember that the API serves them to anyone who can reach it (see [Security](#security)).
+
 ## WebSocket streams
 
 All three endpoints are `GET` upgrades to WebSocket, server to client only. Messages sent by the client are read and discarded. Use `ws://127.0.0.1:8073/ws/...`. See [Security](#security) for origin rules.
@@ -535,6 +782,7 @@ At most one decoder runs at a time. Starting one retunes the radio to what it ne
 | `radiosonde` | `freq_hz`, or the strongest non-spur carrier found in 400-406 MHz; 2.4 MS/s, 15 kHz raw NFM | audio fanned out to the rs1729 decoders `rs41mod`, `dfm09mod`, `m10mod`, `lms6Xmod` |
 | `dsd` | `freq_hz` (default: the VFO), **amateur bands only**; 2.4 MS/s | audio piped to `dsd-fme`; decoded voice replaces `/ws/audio` (`mode: "dsd"`, `rate: 8000`) and the VFO is turned off |
 | `packet` | `freq_hz` (default: the VFO) via an internal 25 kHz NFM demod | audio piped to `direwolf -B 1200` or `-B 9600` (AX.25: packet radio, amateur satellites) |
+| `sstv` | `freq_hz` (default 145.8 MHz, the ISS downlink) via a private 25 kHz raw NFM demod | native Go slow-scan TV decoder, no external tool; see [SSTV and files](#sstv-and-files) |
 
 ### Event envelope
 
@@ -562,6 +810,9 @@ Fields marked "when known" are absent otherwise. Unknown extra fields may appear
 - **`ais`, `message`**: `{"nmea": "!AIVDM,1,1,,A,...", "type": 1, "mmsi": 123456789, "lat": 12.34, "lon": 56.78, "sog": 12.3, "cog": 87.0, "heading": 88, "name": "EXAMPLE", "callsign": "N0CALL", "shiptype": 70}`. `nmea` and `type` and `mmsi` are always present; the rest only for message types that carry them (positions: `lat`, `lon`, `sog`, `cog`, `heading`; static data: `name`, `callsign`, `shiptype`).
 - **`meters`, `message`**: `rtl_433`'s JSON for **your own meters only** (`model`, `id`, `consumption_data`, ...). Kind `snapshot` every 5 seconds: `{"own_ids": 1, "other_meters_heard": 23}`. Other meters are only counted.
 - **`radiosonde`, `message`**: the rs1729 decoder JSON plus `freq_hz`. Common fields: `type` (`RS41`, `DFM`, `M10`, `LMS6`), `id` (serial), `frame`, `datetime`, `lat`, `lon`, `alt` (m), `vel_h` (m/s), `heading` (deg), `vel_v` (m/s climb rate), `sats`, and when available `temp` (degC), `humidity` (%), `pressure` (hPa), `batt` (V).
+- **`sstv`**: `progress` about once per second while receiving: `{"mode": "PD120", "lines": 112, "total_lines": 496, "url": "/api/files/sstv/20261121-151200_pd120.png"}` (the PNG is rewritten as lines arrive). `image` when a picture is finished: `{"mode": "PD120", "width": 640, "height": 496, "lines": 496, "url": "/api/files/sstv/...png", "path": "/abs/path/...png", "started": 1795300000, "duration_s": 126.4, "freq_hz": 145800000, "satellite": {"norad": 12345, "name": "EXAMPLESAT-1"}}` (`satellite` only when a matching satellite is above the horizon). `log` lines report "listening on ..." and "receiving PD120".
+- **`scanner`, `message`**: one per finished transmission, `{"freq_hz": 119250000, "label": "", "start": 1795300000.4, "duration_s": 4.2, "peak_db": -38.0, "mode": "am"}`.
+- **`autopilot`**: `log` lines ("AOS ...", "LOS ...", and skipped passes with their reason), and `pass` at LOS with the history entry of [GET /api/autopilot](#get-apiautopilot).
 - **`dsd`, `message`**: one event per call (repeats of the same call within 3 s are merged): `{"mode": "DMR", "tgt": 3100, "src": 1234567, "color_code": 1, "encrypted": true, "line": "..."}`. Fields appear when `dsd-fme` printed them; `line` is always present, `encrypted` only when `true`. Encrypted traffic is never decrypted.
 
 ## Survey contract
@@ -715,6 +966,9 @@ except KeyboardInterrupt:
 | Location, meters, antenna | `PUT /api/config` | `sdrctl location 12.34 56.78`; `sdrctl meters 12345678`; `sdrctl antenna jpole` |
 | Metadata | `GET /api/meta`, `/api/meta/aircraft/{hex}`, `/api/meta/callsign/{cs}` | `sdrctl meta`; `sdrctl meta aircraft a1b2c3`; `sdrctl meta callsign TST123` |
 | Satellites | `GET /api/satellites/...` | `sdrctl sats passes -hours 24 -min-el 10`; `sdrctl sats overhead`; `sdrctl sats match 436.5M -tol 15k` |
+| Scanner | `POST /api/scanner`, `GET /api/scanner`, `/api/scanner/stop`, `/api/scanner/lockout` | `sdrctl scanner air`; `sdrctl scanner 118M 137M -mode am`; `sdrctl scanner status`; `sdrctl scanner lockout 132.15M [-remove]`; `sdrctl scanner stop` (`-follow` prints one line per transmission) |
+| Transcription | `GET /api/transcripts`, `/api/transcribe` | `sdrctl transcripts -q runway -follow`; `sdrctl transcribe 10`; `sdrctl transcribe on` |
+| Autopilot | `GET/PUT /api/autopilot`, `/api/autopilot/run`, `/api/autopilot/stop` | `sdrctl autopilot on -min-el 20 -sats 12345,67890`; `sdrctl autopilot status`; `sdrctl autopilot run 12345`; `sdrctl autopilot stop` |
 | Survey | `POST /api/survey` and polling | `sdrctl survey -seconds 20 scan:2m aprs` (also `-listen=false`, `-listen-seconds 8`); `sdrctl survey status`; `sdrctl survey stop` |
 
 `sdrctl` prints the response JSON on stdout and exits non-zero on an HTTP error (body on stderr). The WebSocket streams have no CLI equivalent.
@@ -725,6 +979,7 @@ except KeyboardInterrupt:
 - **The `meters` decoder never publishes other meters.** Only the IDs in your `meter_ids` list appear in `message` events and survey samples. Other meters are counted by a salted, in-memory hash (so the `other_meters_heard` count works) and their IDs are never stored or published.
 - **Encrypted digital voice is never decrypted.** The `dsd` decoder mutes encrypted calls and reports only the metadata it printed, with `"encrypted": true`. It is limited to amateur radio bands.
 - **Metadata is looked up offline.** `sdrd` makes no per-aircraft, per-station or per-satellite requests; datasets are bulk downloads you fetch yourself (see [Metadata](#metadata)). The FAA registry is loaded without owner names or addresses. Your receiver location is used only locally for satellite geometry.
+- **Data directory.** SSTV pictures and autopilot pass records (decoded packets, FM audio, optional raw IQ) are written under `sdrd -data-dir` (default `~/.local/share/sweep`) and are readable through `GET /api/files/...` by anyone who can reach the API.
 - Decoded data in the event stream (aircraft positions, AIS vessels, APRS stations, sensor readings) is whatever was received over the air; consider what your own application stores and republishes.
 - `POST /api/record` reveals the server's filesystem path in its response and writes raw IQ files that can contain third-party transmissions.
 - The examples in this document use obviously fake values (coordinates 12.34 / 56.78, callsign N0CALL, meter ID 12345678).

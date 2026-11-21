@@ -38,8 +38,10 @@ export function Controls(props: {
   step: number;
   setStep: (hz: number) => void;
   children?: ReactNode;
+  /** scanner owns the radio: tuning inputs disabled */
+  locked?: boolean;
 }) {
-  const { status, centerHz, tuner, step, setStep, children } = props;
+  const { status, centerHz, tuner, step, setStep, children, locked = false } = props;
   const [text, setText] = useState("");
   const [focused, setFocused] = useState(false);
   const [bad, setBad] = useState<string | null>(null);
@@ -71,6 +73,7 @@ export function Controls(props: {
         <input
           ref={inputRef}
           className={`freq ${bad ? "invalid" : ""}`}
+          disabled={locked}
           value={text}
           spellCheck={false}
           onFocus={() => setFocused(true)}
@@ -90,10 +93,10 @@ export function Controls(props: {
         {bad && <span className="err">{bad}</span>}
       </span>
       <span className="item">
-        <button onClick={() => shift(-BIG)} title="-10 steps">«</button>
-        <button onClick={() => shift(-1)} title="-1 step">‹</button>
-        <button onClick={() => shift(1)} title="+1 step">›</button>
-        <button onClick={() => shift(BIG)} title="+10 steps">»</button>{" "}
+        <button disabled={locked} onClick={() => shift(-BIG)} title="-10 steps">«</button>
+        <button disabled={locked} onClick={() => shift(-1)} title="-1 step">‹</button>
+        <button disabled={locked} onClick={() => shift(1)} title="+1 step">›</button>
+        <button disabled={locked} onClick={() => shift(BIG)} title="+10 steps">»</button>{" "}
         <select value={step} onChange={(e) => setStep(Number(e.target.value))} aria-label="step">
           {STEPS.map((s) => (
             <option key={s.hz} value={s.hz}>{s.label}</option>
@@ -104,7 +107,7 @@ export function Controls(props: {
         <span className="label">gain</span>{" "}
         <select
           value={gainVal}
-          disabled={!status}
+          disabled={!status || locked}
           onChange={(e) => tuner.setParams({ gain_db: e.target.value === "auto" ? null : Number(e.target.value) })}
         >
           <option value="auto">auto</option>
@@ -117,7 +120,7 @@ export function Controls(props: {
         <span className="label">rate</span>{" "}
         <select
           value={status?.sample_rate ?? ""}
-          disabled={!status}
+          disabled={!status || locked}
           onChange={(e) => tuner.setParams({ sample_rate: Number(e.target.value) })}
         >
           {rates.map((r) => (
@@ -125,6 +128,7 @@ export function Controls(props: {
           ))}
         </select>
       </span>
+      {locked && <span className="warn-inline">scanner controls the radio</span>}
       {children}
       {tuner.error && <span className="err">{tuner.error}</span>}
     </div>

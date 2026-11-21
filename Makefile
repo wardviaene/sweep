@@ -1,4 +1,4 @@
-.PHONY: envcheck build test dev dev-synth web decoders metadata
+.PHONY: envcheck build test dev dev-synth web decoders metadata whisper-model
 
 envcheck:
 	@bash scripts/envcheck.sh
@@ -28,3 +28,12 @@ decoders:
 # bulk-download the public datasets used to name aircraft, airlines and satellites (docs/metadata.md)
 metadata:
 	@bash scripts/fetch-metadata.sh
+
+# download the whisper.cpp model used for transcription (docs/transcription.md), ~490 MB, skipped if present
+WHISPER_MODEL ?= $(HOME)/.local/share/sweep/models/ggml-small.en.bin
+whisper-model:
+	@if [ -f "$(WHISPER_MODEL)" ]; then echo "$(WHISPER_MODEL) exists"; else \
+	  mkdir -p "$(dir $(WHISPER_MODEL))" && \
+	  curl -fL -A "Mozilla/5.0 (sweep make whisper-model)" -o "$(WHISPER_MODEL).part" \
+	    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin && \
+	  mv "$(WHISPER_MODEL).part" "$(WHISPER_MODEL)"; fi

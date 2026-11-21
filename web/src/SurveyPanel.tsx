@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Survey, SurveyStep } from "./api";
+import type { Survey, SurveyStep, Transcript } from "./api";
+import { TranscriptLine } from "./Clips";
+import { surveyTranscript } from "./transcripts";
 import { antennaFit, planSurvey, type Antenna, type Band, type BandMode, type Catalog } from "./bands";
 import { useSurvey } from "./useSurvey";
 
@@ -86,6 +88,7 @@ interface Props {
   /** audio output state and toggle (the control bar's) */
   audioOn?: boolean;
   onAudioToggle?: () => void;
+  transcripts: Transcript[];
 }
 
 const DEFAULT_LISTEN_S = 8;
@@ -240,6 +243,7 @@ export function SurveyPanel(p: Props) {
               bandName={bandName}
               bandOf={bandOf}
               note={note}
+              transcripts={p.transcripts}
               onStop={sv.stop}
               onNew={() => setSetupMode(true)}
               busy={sv.busy}
@@ -412,6 +416,7 @@ function Progress(p: {
   bandName: (id: string | undefined) => string;
   bandOf: (id: string | undefined) => Band | undefined;
   note: string | null;
+  transcripts: Transcript[];
   busy: boolean;
   onStop: () => void;
   onNew: () => void;
@@ -441,7 +446,14 @@ function Progress(p: {
   );
 
   const card = (s: SurveyStep) => (
-    <StepCard key={s.id} step={s} band={p.bandOf(s.band)} finished={!running} {...p} />
+    <StepCard
+      key={s.id}
+      step={s}
+      band={p.bandOf(s.band)}
+      finished={!running}
+      transcript={s.listened ? surveyTranscript(p.transcripts, s.listened.freq_hz, survey.started ?? 0) : undefined}
+      {...p}
+    />
   );
 
   return (
@@ -488,6 +500,7 @@ function StepIcon({ state }: { state: SurveyStep["state"] }) {
 
 function StepCard(p: {
   step: SurveyStep;
+  transcript?: Transcript;
   band: Band | undefined;
   finished: boolean;
   onOpenDecoder: (s: SurveyStep) => void;
@@ -522,6 +535,7 @@ function StepCard(p: {
           })()}
         </div>
       )}
+      {s.listened && p.transcript && <div className="sv-tr"><TranscriptLine t={p.transcript} /></div>}
       {nothing && <div className="dim">{s.kind === "scan" ? "no carriers found" : `nothing heard in ${Math.round(s.seconds ?? 0)} s`}</div>}
       {s.state === "skipped" && <div className="dim">skipped{s.reason ? `: ${s.reason}` : ""}</div>}
       {s.state === "error" && <div className="err" style={{ margin: 0, whiteSpace: "pre-wrap" }}>{s.error ?? "error"}</div>}

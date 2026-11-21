@@ -15,6 +15,7 @@ import (
 
 	"github.com/wardviaene/sweep/internal/meta"
 	"github.com/wardviaene/sweep/internal/radio"
+	"github.com/wardviaene/sweep/internal/sstv"
 )
 
 // Meta enriches decoded data from offline datasets (see docs/metadata.md).
@@ -27,13 +28,14 @@ type Meta interface {
 }
 
 // Names of the supported decoders.
-var Names = []string{"rtl_433", "meters", "adsb", "uat", "aprs", "ais", "packet", "radiosonde", "dsd"}
+var Names = []string{"rtl_433", "meters", "adsb", "uat", "aprs", "ais", "packet", "radiosonde", "dsd", "sstv"}
 
 // Options are per-start decoder parameters (see docs/protocol.md).
 type Options struct {
 	Region string `json:"region"`  // aprs: us | eu
 	FreqHz uint32 `json:"freq_hz"` // packet: channel frequency
 	Baud   int    `json:"baud"`    // packet: 1200 | 9600
+	Mode   string `json:"mode"`    // sstv: auto (default) or a mode name (Robot36, PD90, PD120, PD180, Martin1, Scottie1)
 }
 
 // Status is status.decoder.
@@ -46,6 +48,8 @@ type Status struct {
 	Error   string `json:"error,omitempty"`
 	// LastEventTS is the unix time (seconds) of the latest event from this run, 0 if none.
 	LastEventTS float64 `json:"last_event_ts"`
+
+	tap int // id of the decoder's private audio tap (0 = none), for RetuneChannel
 }
 
 // Manager runs at most one decoder.
@@ -58,6 +62,7 @@ type Manager struct {
 	Audio    radio.AudioSink                    // where decoded digital voice (dsd) is sent
 	ToolDirs []string                           // extra directories searched for decoder binaries
 	Meta     Meta                               // optional: adds country, registration, airline, satellite names
+	SSTVDir  string                             // where the sstv decoder writes its PNG files (default: a temp directory)
 
 	mu   sync.Mutex
 	cur  *run
@@ -160,6 +165,15 @@ func (m *Manager) Start(name string, opt Options) error {
 			return fmt.Errorf("dsd: %.4f MHz is outside the amateur bands; sweep only decodes digital voice on amateur frequencies (50-54, 144-148, 222-225, 420-450, 902-928, 1240-1300 MHz)", float64(opt.FreqHz)/1e6)
 		}
 		fn = func(ctx context.Context, st *Status) error { return m.runDSD(ctx, st, opt.FreqHz) }
+	case "sstv":
+		if opt.FreqHz == 0 {
+			opt.FreqHz = 145_800_000 // the ISS SSTV downlink
+		}
+		mode, err := sstv.ParseMode(opt.Mode)
+		if err != nil {
+			return err
+		}
+		fn = func(ctx context.Context, st *Status) error { return m.runSSTV(ctx, st, opt.FreqHz, mode) }
 	case "packet":
 		if opt.Baud == 0 {
 			opt.Baud = 1200
@@ -218,6 +232,41 @@ func (m *Manager) Start(name string, opt Options) error {
 	case <-time.After(wait):
 		return nil
 	}
+}
+
+// setTap records the private audio tap of the running decoder so that
+// RetuneChannel can move it. Decoders that run a private demod call it right
+// after radio.AddAudioTap.
+func (m *Manager) setTap(st *Status, id int) {
+	m.mu.Lock()
+	st.tap = id
+	m.mu.Unlock()
+}
+
+// RetuneChannel moves the running decoder's channel to hz in place (Doppler
+// tracking): its private demod keeps its filter state and the decoder keeps
+// running. It fails when no decoder runs or the decoder has no private channel.
+func (m *Manager) RetuneChannel(hz uint32) error {
+	m.mu.Lock()
+	cur := m.cur
+	var id int
+	if cur != nil {
+		id = cur.st.tap
+	}
+	m.mu.Unlock()
+	if cur == nil {
+		return fmt.Errorf("no decoder running")
+	}
+	if id == 0 {
+		return fmt.Errorf("decoder %s has no retunable channel", cur.st.Name)
+	}
+	if err := m.r.SetTapFreq(id, hz); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	cur.st.FreqHz = hz
+	m.mu.Unlock()
+	return nil
 }
 
 func (m *Manager) setFreq(st *Status, f uint32) {

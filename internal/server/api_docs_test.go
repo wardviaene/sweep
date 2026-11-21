@@ -9,6 +9,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/wardviaene/sweep/internal/autopilot"
+	"github.com/wardviaene/sweep/internal/scanner"
 )
 
 // routeRE matches mux.HandleFunc("GET /api/x", ...) and mux.Handle("/", ...).
@@ -113,7 +116,10 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 // TestDocumentedRoutesAreServed asks the real mux which pattern serves each
 // documented route, so a renamed pattern that the regexp missed still fails.
 func TestDocumentedRoutesAreServed(t *testing.T) {
-	mux, ok := Handler(Deps{}).(*http.ServeMux)
+	mux, ok := Handler(Deps{
+		Scanner:   scanner.New(scanner.Deps{}),
+		Autopilot: autopilot.New(autopilot.Deps{DataDir: t.TempDir()}),
+	}).(*http.ServeMux)
 	if !ok {
 		t.Skip("Handler no longer returns *http.ServeMux")
 	}

@@ -4,6 +4,7 @@ import type { LatLon } from "./geo";
 import { Popover } from "./Popover";
 import type { Antenna } from "./bands";
 import { getMeta, type MetaDataset } from "./api";
+import { TranscribeSettings } from "./TranscribeSettings";
 
 const parse = (s: string): number | null => (s.trim() === "" || !Number.isFinite(Number(s)) ? null : Number(s));
 
@@ -156,6 +157,8 @@ export function SettingsMenu(props: {
         <button disabled={busy || idsBad || !config.available} onClick={() => void run(idList, "meter IDs saved")}>Save IDs</button>
       </div>
       <div className="dim pad0">The ID is printed on your meter; meters you don't own are never shown.</div>
+      <hr />
+      <TranscribeSettings open={open} />
       <hr />
       <div className="label">datasets</div>
       {datasets === null && <div className="dim pad0">metadata API not available on this backend</div>}

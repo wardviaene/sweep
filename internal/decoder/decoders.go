@@ -221,6 +221,7 @@ func (m *Manager) direwolf(ctx context.Context, st *Status, kind string, freq ui
 	}
 	id, pcm, rate := m.r.AddAudioTap(freq, dsp.ModeNFM, bw, raw)
 	defer m.r.RemoveTap(id)
+	m.setTap(st, id)
 
 	cmd := exec.CommandContext(ctx, bin, "-c", conf, "-r", strconv.Itoa(rate), "-n", "1", "-b", "16",
 		"-B", modem, "-t", "0", "-q", "hd", "-")

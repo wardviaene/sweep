@@ -15,11 +15,14 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/wardviaene/sweep/data"
+	"github.com/wardviaene/sweep/internal/autopilot"
 	"github.com/wardviaene/sweep/internal/config"
 	"github.com/wardviaene/sweep/internal/decoder"
 	"github.com/wardviaene/sweep/internal/meta"
 	"github.com/wardviaene/sweep/internal/radio"
+	"github.com/wardviaene/sweep/internal/scanner"
 	"github.com/wardviaene/sweep/internal/survey"
+	"github.com/wardviaene/sweep/internal/transcribe"
 )
 
 // Hub fans spectrum frames out to WebSocket clients. Slow clients drop frames.
@@ -108,16 +111,21 @@ func (h *Hub) remove(c *client) {
 // Handler returns the HTTP handler. static may be nil.
 // Deps are the components the HTTP API exposes.
 type Deps struct {
-	Radio     *radio.Radio
-	Hub       *Hub
-	Audio     *AudioHub
-	Decoders  *decoder.Manager
-	Events    *decoder.Events
-	Config    *config.Store
-	Survey    *survey.Runner
-	Meta      *meta.DB // offline names for aircraft, airlines, satellites, frequencies; may be nil
-	Static    fs.FS    // built web UI, may be nil
-	RecordDir string   // where POST /api/record writes cu8 files
+	Radio      *radio.Radio
+	Hub        *Hub
+	Audio      *AudioHub
+	Decoders   *decoder.Manager
+	Events     *decoder.Events
+	Config     *config.Store
+	Survey     *survey.Runner
+	Scanner    *scanner.Scanner        // may be nil
+	Autopilot  *autopilot.Autopilot    // may be nil
+	Transcribe *transcribe.Transcriber // speech to text, may be nil
+	Meta       *meta.DB                // offline names for aircraft, airlines, satellites, frequencies; may be nil
+	Static     fs.FS                   // built web UI, may be nil
+	RecordDir  string                  // where POST /api/record writes cu8 files
+	SSTVDir    string                  // served read-only at /api/files/sstv/{name}; empty disables
+	PassesDir  string                  // served read-only at /api/files/passes/{name}; empty disables
 }
 
 // Handler returns the HTTP handler.
@@ -135,6 +143,9 @@ func Handler(d Deps) http.Handler {
 		}
 		if d.Survey.Active() {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "a survey is running"})
+			return
+		}
+		if scannerBusy(w, d) {
 			return
 		}
 		if err := d.Decoders.Start(body.Decoder, body.Options); err != nil {
@@ -170,6 +181,10 @@ func Handler(d Deps) http.Handler {
 				err = survey.ValidAntenna(*c.Antenna)
 			}
 		}
+		if v, ok := patch["scanner_lockouts"]; ok {
+			c.ScannerLockouts = nil
+			err = errors.Join(err, json.Unmarshal(v, &c.ScannerLockouts))
+		}
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -185,6 +200,9 @@ func Handler(d Deps) http.Handler {
 		var sr survey.Request
 		if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&sr); err != nil && !errors.Is(err, io.EOF) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if autopilotBusy(w, d) {
 			return
 		}
 		st, err := d.Survey.Start(sr)
@@ -204,6 +222,8 @@ func Handler(d Deps) http.Handler {
 		writeJSON(w, http.StatusOK, d.Survey.Stop())
 	})
 	mux.HandleFunc("POST /api/record", recordHandler(d, d.RecordDir))
+	mux.HandleFunc("GET /api/files/{kind}/{name}", filesHandler(d))
+	mux.HandleFunc("GET /api/files/passes/{dir}/{name}", passFileHandler(d))
 	mux.HandleFunc("GET /api/events", func(w http.ResponseWriter, req *http.Request) {
 		since, _ := strconv.ParseInt(req.URL.Query().Get("since"), 10, 64)
 		limit, err := qint(req, "limit", 200, 1, 1000)
@@ -242,6 +262,9 @@ func Handler(d Deps) http.Handler {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		if scannerBusy(w, d) {
+			return
+		}
 		st, err := r.Tune(t)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -258,6 +281,9 @@ func Handler(d Deps) http.Handler {
 		dr, err := decodeDemod(body)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if scannerBusy(w, d) {
 			return
 		}
 		// The dsd decoder owns the audio stream (digital voice); asking for an
@@ -297,6 +323,9 @@ func Handler(d Deps) http.Handler {
 		writeJSON(w, http.StatusOK, res)
 	})
 	metaRoutes(mux, d)
+	scannerRoutes(mux, d)
+	autopilotRoutes(mux, d)
+	transcribeRoutes(mux, d)
 	mux.HandleFunc("GET /ws/spectrum", func(w http.ResponseWriter, req *http.Request) {
 		serveSpectrum(w, req, hub)
 	})

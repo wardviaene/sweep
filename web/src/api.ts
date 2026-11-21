@@ -34,12 +34,14 @@ export interface DemodParams {
 }
 
 export type DecoderName =
-  | "rtl_433" | "meters" | "adsb" | "uat" | "aprs" | "ais" | "packet" | "radiosonde" | "dsd";
+  | "rtl_433" | "meters" | "adsb" | "uat" | "aprs" | "ais" | "packet" | "radiosonde" | "dsd" | "sstv";
 
 /** Per-decoder start options (packet, dsd, radiosonde). */
 export interface DecoderOpts {
   freq_hz?: number;
   baud?: number;
+  /** sstv: "auto" or a mode name */
+  mode?: string;
 }
 
 export interface DecoderStatus {
@@ -103,6 +105,7 @@ export function setDecoder(decoder: DecoderName | "none", region?: string, opts?
   if (region) body.region = region;
   if (opts?.freq_hz !== undefined) body.freq_hz = opts.freq_hz;
   if (opts?.baud !== undefined) body.baud = opts.baud;
+  if (opts?.mode !== undefined) body.mode = opts.mode;
   return post<Status>("/api/decoder", body);
 }
 
@@ -440,4 +443,304 @@ export async function getPasses(
     });
   }
   return { passes, noReceiver: false };
+}
+
+// --- scanner (docs/scanner.md) ---
+
+export type ScannerRunState = "idle" | "watching" | "locked" | "stopped";
+
+export interface ScannerWindow {
+  center_hz: number;
+  lo_hz: number;
+  hi_hz: number;
+  index: number;
+  count: number;
+}
+
+export interface ScannerActive {
+  freq_hz: number;
+  label?: string;
+  since: number; // server epoch seconds
+  level_db: number;
+}
+
+export interface ScannerTx {
+  /** transcript id when the backend assigns one to the transmission */
+  id?: string;
+  freq_hz: number;
+  label?: string;
+  start: number;
+  duration_s: number;
+  peak_db: number;
+  mode?: string;
+}
+
+export interface ScannerChannel {
+  freq_hz: number;
+  label?: string;
+  count: number;
+  total_s: number;
+  last: number;
+}
+
+export interface ScannerState {
+  state: ScannerRunState;
+  band?: string;
+  lo_hz: number;
+  hi_hz: number;
+  mode: string;
+  window?: ScannerWindow | null;
+  active?: ScannerActive | null;
+  recent: ScannerTx[];
+  channels: ScannerChannel[];
+  lockout_hz: number[];
+  started?: number;
+}
+
+export interface ScannerParams {
+  band?: string;
+  lo_hz?: number;
+  hi_hz?: number;
+  mode?: string;
+  bandwidth_hz?: number;
+  step_hz?: number;
+  margin_db?: number;
+  hang_s?: number;
+  dwell_ms?: number;
+  max_tx_s?: number;
+  lockout_hz?: number[];
+  priority_hz?: number[];
+}
+
+type RawScanner = Partial<ScannerState>;
+function toScanner(s: RawScanner): ScannerState {
+  return {
+    state: s.state ?? "idle",
+    band: s.band,
+    lo_hz: s.lo_hz ?? 0,
+    hi_hz: s.hi_hz ?? 0,
+    mode: s.mode ?? "",
+    window: s.window ?? null,
+    active: s.active ?? null,
+    recent: Array.isArray(s.recent) ? s.recent : [],
+    channels: Array.isArray(s.channels) ? s.channels : [],
+    lockout_hz: Array.isArray(s.lockout_hz) ? s.lockout_hz : [],
+    started: s.started,
+  };
+}
+
+export async function getScanner(signal?: AbortSignal): Promise<ScannerState> {
+  return toScanner(await request<RawScanner>("/api/scanner", { signal }));
+}
+export async function startScanner(p: ScannerParams): Promise<ScannerState> {
+  return toScanner(await post<RawScanner>("/api/scanner", p));
+}
+export async function stopScanner(): Promise<ScannerState> {
+  return toScanner(await post<RawScanner>("/api/scanner/stop", {}));
+}
+export async function scannerLockout(freq_hz: number, remove?: boolean): Promise<void> {
+  await post<unknown>("/api/scanner/lockout", remove ? { freq_hz, remove: true } : { freq_hz });
+}
+
+// ---- pass autopilot (docs/autopilot.md) ----
+
+export interface ApPass {
+  norad: number;
+  name: string;
+  aos: number;
+  los: number;
+  max_elevation_deg: number;
+  downlink_hz: number;
+  decoder: string;
+  baud?: number;
+}
+export interface ApCurrent extends ApPass {
+  doppler_hz: number;
+  elevation_deg: number;
+  azimuth_deg: number;
+  packets: number;
+  images: number;
+  dir: string;
+}
+export interface ApNext extends ApPass {
+  will_run: boolean;
+  reason: string;
+}
+export interface ApHistory {
+  norad: number;
+  name: string;
+  aos: number;
+  los: number;
+  max_elevation_deg: number;
+  decoder: string;
+  packets: number;
+  images: number;
+  audio: string;
+  dir: string;
+  state: string;
+  reason: string;
+}
+export interface Autopilot {
+  enabled: boolean;
+  min_elevation: number;
+  satellites: number[];
+  preempt: boolean;
+  listen: boolean;
+  record_iq: boolean;
+  receiver_set: boolean;
+  datasets_ok: boolean;
+  current: ApCurrent | null;
+  next: ApNext[];
+  history: ApHistory[];
+}
+export type AutopilotPatch = Partial<Pick<Autopilot, "enabled" | "min_elevation" | "satellites" | "preempt" | "listen" | "record_iq">>;
+
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
+const n0 = (v: unknown): number => num(v) ?? 0;
+
+function toApPass(r: Record<string, unknown>): ApPass {
+  return {
+    norad: n0(r.norad), name: str(r.name), aos: n0(r.aos), los: n0(r.los),
+    max_elevation_deg: n0(r.max_elevation_deg), downlink_hz: n0(r.downlink_hz), decoder: str(r.decoder), baud: num(r.baud),
+  };
+}
+const rec = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
+const arr = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? (v as unknown[]).map(rec).filter((x): x is Record<string, unknown> => x !== null) : []);
+
+function toAutopilot(j: Record<string, unknown>): Autopilot {
+  const c = rec(j.current);
+  return {
+    enabled: j.enabled === true,
+    min_elevation: num(j.min_elevation) ?? 20,
+    satellites: Array.isArray(j.satellites) ? (j.satellites as unknown[]).filter((x): x is number => typeof x === "number") : [],
+    preempt: j.preempt === true,
+    listen: j.listen !== false,
+    record_iq: j.record_iq === true,
+    receiver_set: j.receiver_set !== false,
+    datasets_ok: j.datasets_ok !== false,
+    current: c
+      ? { ...toApPass(c), doppler_hz: n0(c.doppler_hz), elevation_deg: n0(c.elevation_deg), azimuth_deg: n0(c.azimuth_deg), packets: n0(c.packets), images: n0(c.images), dir: str(c.dir) }
+      : null,
+    next: arr(j.next).slice(0, 50).map((r) => ({ ...toApPass(r), will_run: r.will_run === true, reason: str(r.reason) })),
+    history: arr(j.history).slice(0, 50).map((r) => ({
+      norad: n0(r.norad), name: str(r.name), aos: n0(r.aos), los: n0(r.los), max_elevation_deg: n0(r.max_elevation_deg),
+      decoder: str(r.decoder), packets: n0(r.packets), images: n0(r.images), audio: str(r.audio), dir: str(r.dir),
+      state: str(r.state), reason: str(r.reason),
+    })),
+  };
+}
+
+export async function getAutopilot(signal?: AbortSignal): Promise<Autopilot> {
+  return toAutopilot(await request<Record<string, unknown>>("/api/autopilot", { signal }));
+}
+export async function putAutopilot(patch: AutopilotPatch): Promise<Autopilot> {
+  return toAutopilot(
+    await request<Record<string, unknown>>("/api/autopilot", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
+  );
+}
+export async function autopilotStop(): Promise<void> {
+  await post<unknown>("/api/autopilot/stop", {});
+}
+export async function autopilotRun(norad: number): Promise<void> {
+  await post<unknown>("/api/autopilot/run", { norad });
+}
+
+// ---- transcription (docs/transcription.md) ----
+
+export type TranscriptSource = "scanner" | "survey" | "manual";
+
+export interface Transcript {
+  id: string;
+  source: TranscriptSource;
+  freq_hz: number;
+  label: string;
+  mode: string;
+  /** clip start, epoch seconds */
+  start: number;
+  duration_s: number;
+  text: string;
+  empty: boolean;
+  url: string;
+}
+
+/** Validates one transcript record (an event's data, a list item or a POST result). */
+export function toTranscript(d: unknown): Transcript | null {
+  if (!d || typeof d !== "object") return null;
+  const r = d as Record<string, unknown>;
+  const f = r.freq_hz;
+  const s = r.start;
+  if (typeof f !== "number" || typeof s !== "number") return null;
+  const text = typeof r.text === "string" ? r.text.trim() : "";
+  const src = r.source === "survey" || r.source === "manual" ? r.source : "scanner";
+  return {
+    id: typeof r.id === "string" && r.id !== "" ? r.id : `${f}:${s}`,
+    source: src,
+    freq_hz: f,
+    label: typeof r.label === "string" ? r.label : "",
+    mode: typeof r.mode === "string" ? r.mode : "",
+    start: s,
+    duration_s: typeof r.duration_s === "number" ? r.duration_s : 0,
+    text,
+    empty: r.empty === true || text === "",
+    url: typeof r.url === "string" ? r.url : "",
+  };
+}
+
+/** Newest first; resolves [] on a backend without the endpoint is left to the caller (it throws). */
+export async function getTranscripts(
+  o: { q?: string; freq_hz?: number; limit?: number },
+  signal?: AbortSignal,
+): Promise<Transcript[]> {
+  const u = new URLSearchParams({ since: "0", limit: String(o.limit ?? 100) });
+  if (o.q) u.set("q", o.q);
+  if (o.freq_hz) u.set("freq_hz", String(o.freq_hz));
+  const j = await request<unknown>(`/api/transcripts?${u.toString()}`, { signal });
+  const arr = Array.isArray(j) ? j : j && typeof j === "object" && Array.isArray((j as { transcripts?: unknown }).transcripts) ? (j as { transcripts: unknown[] }).transcripts : [];
+  const out: Transcript[] = [];
+  for (const x of arr) {
+    const t = toTranscript(x);
+    if (t) out.push(t);
+  }
+  return out;
+}
+
+export interface TranscribeStatus {
+  enabled: boolean;
+  model: string;
+  server: "running" | "stopped" | "error" | string;
+  queue: number;
+  last_error: string;
+}
+
+function toTranscribeStatus(j: Partial<TranscribeStatus>): TranscribeStatus {
+  return {
+    enabled: j.enabled === true,
+    model: typeof j.model === "string" ? j.model : "",
+    server: typeof j.server === "string" ? j.server : "stopped",
+    queue: typeof j.queue === "number" ? j.queue : 0,
+    last_error: typeof j.last_error === "string" ? j.last_error : "",
+  };
+}
+
+export async function getTranscribe(signal?: AbortSignal): Promise<TranscribeStatus> {
+  return toTranscribeStatus(await request<Partial<TranscribeStatus>>("/api/transcribe", { signal }));
+}
+
+export async function putTranscribe(enabled: boolean): Promise<TranscribeStatus> {
+  return toTranscribeStatus(
+    await request<Partial<TranscribeStatus>>("/api/transcribe", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    }),
+  );
+}
+
+/** Records the next `seconds` of the VFO audio and transcribes it; resolves when done (the record may be null). */
+export async function postTranscribe(seconds: number): Promise<Transcript | null> {
+  return toTranscript(await post<unknown>("/api/transcribe", { seconds }));
 }

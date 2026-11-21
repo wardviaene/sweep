@@ -8,7 +8,7 @@
 //	sdrctl spectrum [-bins 128] [-frames 20] [-agg avg|max]
 //	sdrctl listen 446.00625M [-mode nfm] [-bw 12.5k] [-squelch -60|off]
 //	sdrctl demod off|nfm|am|usb|lsb
-//	sdrctl decoder rtl_433|adsb|aprs|ais|none [-region us|eu]
+//	sdrctl decoder rtl_433|adsb|aprs|ais|sstv|none [-region us|eu] [-freq 145.8M -mode auto|PD120|...]
 //	sdrctl events [-since 0] [-limit 50] [-decoder rtl_433]
 //	sdrctl bands [-region us|eu]
 //	sdrctl band <id> [-region us|eu]
@@ -17,6 +17,8 @@
 //	sdrctl antenna [id|clear]
 //	sdrctl survey [-seconds 20] [-include-fair] [-region us] [-antenna id] [-listen=true] [-listen-seconds 8] [step ...]
 //	sdrctl survey status|stop
+//	sdrctl scanner air|<lo> <hi> [-mode am] [-follow] | scanner status|stop | scanner lockout <freq> [-remove]
+//	sdrctl transcripts [-q text] [-follow] | transcribe <seconds>|on|off
 //	sdrctl meta [aircraft <hex>|callsign <callsign>]
 //	sdrctl sats passes [-hours 24] [-min-el 10]
 //	sdrctl sats overhead
@@ -111,7 +113,7 @@ func init() {
 		}
 		return post("/api/demod", map[string]any{"mode": a[0]})
 	}}
-	commands["decoder"] = command{"decoder <rtl_433|meters|adsb|aprs|ais|packet|none> [-region us|eu] [-freq 437.8M -baud 9600]", func(a []string) error {
+	commands["decoder"] = command{"decoder <rtl_433|meters|adsb|aprs|ais|packet|sstv|none> [-region us|eu] [-freq 437.8M -baud 9600] [-mode auto|Robot36|PD90|PD120|PD180|Martin1|Scottie1]", func(a []string) error {
 		if len(a) < 1 || strings.HasPrefix(a[0], "-") {
 			return usageErr("decoder")
 		}
@@ -119,10 +121,14 @@ func init() {
 		region := fs.String("region", "us", "us or eu (APRS frequency)")
 		freq := fs.String("freq", "", "packet: channel frequency, e.g. 437.8M")
 		baud := fs.Int("baud", 1200, "packet: 1200 or 9600")
+		mode := fs.String("mode", "", "sstv: auto (default) or a mode name, e.g. PD120 (-freq defaults to 145.8M for sstv)")
 		if err := fs.Parse(a[1:]); err != nil {
 			return err
 		}
 		body := map[string]any{"decoder": a[0], "region": *region, "baud": *baud}
+		if *mode != "" {
+			body["mode"] = *mode
+		}
 		if *freq != "" {
 			f, err := ParseFreq(*freq)
 			if err != nil {

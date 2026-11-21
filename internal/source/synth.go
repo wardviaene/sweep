@@ -24,6 +24,7 @@ type Synth struct {
 	tones      []Tone
 	phase      []float64
 	fms        []*fmSource
+	bursts     []*burst
 	noise      float64
 	rng        *rand.Rand
 
@@ -79,6 +80,16 @@ func (s *Synth) Read(p []byte) (int, error) {
 			re += t.Amp * math.Cos(s.phase[k])
 			im += t.Amp * math.Sin(s.phase[k])
 		}
+		for _, b := range s.bursts {
+			g := b.gain(s.sampleRate)
+			off := b.freqHz - s.centerHz
+			if g == 0 || math.Abs(off) >= s.sampleRate/2 {
+				continue
+			}
+			b.phase += 2 * math.Pi * off / s.sampleRate
+			re += g * b.amp * math.Cos(b.phase)
+			im += g * b.amp * math.Sin(b.phase)
+		}
 		for _, f := range s.fms {
 			off := f.freqHz - s.centerHz
 			if math.Abs(off) >= s.sampleRate/2 {
@@ -99,6 +110,9 @@ func (s *Synth) Read(p []byte) (int, error) {
 	}
 	for _, f := range s.fms {
 		f.phase = math.Mod(f.phase, 2*math.Pi)
+	}
+	for _, b := range s.bursts {
+		b.phase = math.Mod(b.phase, 2*math.Pi)
 	}
 	s.emitted += int64(n / 2)
 	return n, nil
@@ -178,5 +192,44 @@ func (s *Synth) AddFM(freqHz float64, pcm []int16, rate, devHz, gap float64) {
 	}
 	s.mu.Lock()
 	s.fms = append(s.fms, &fmSource{freqHz: freqHz, devHz: devHz, amp: 0.3, audio: a, rate: rate})
+	s.mu.Unlock()
+}
+
+// burst is a carrier keyed on and off with 2 ms ramps (no splatter).
+type burst struct {
+	freqHz, amp float64
+	onS, offS   float64
+	phase       float64
+	pos         float64 // seconds into the cycle
+}
+
+// gain advances the keying clock by one sample and returns the carrier gain 0..1.
+func (b *burst) gain(sampleRate float64) float64 {
+	if b.offS <= 0 {
+		return 1
+	}
+	b.pos += 1 / sampleRate
+	if cycle := b.offS + b.onS; b.pos >= cycle {
+		b.pos -= cycle
+	}
+	const ramp = 0.002
+	t := b.pos - b.offS // seconds since the carrier keyed up
+	switch {
+	case t < 0:
+		return 0
+	case t < ramp:
+		return t / ramp
+	case t > b.onS-ramp:
+		return max(0, (b.onS-t)/ramp)
+	}
+	return 1
+}
+
+// AddBurst adds a carrier at freqHz that is silent for offS seconds, then on
+// for onS seconds, repeating (the first transmission starts after offS). offS 0
+// makes it continuous. Amp is linear, full scale = 1.
+func (s *Synth) AddBurst(freqHz, onS, offS, amp float64) {
+	s.mu.Lock()
+	s.bursts = append(s.bursts, &burst{freqHz: freqHz, amp: amp, onS: onS, offS: offS})
 	s.mu.Unlock()
 }

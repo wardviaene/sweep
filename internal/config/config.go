@@ -26,6 +26,64 @@ type Config struct {
 	MeterIDs []string `json:"meter_ids,omitempty"`
 	// Antenna is an antenna id from the band catalog (nil = unknown).
 	Antenna *string `json:"antenna,omitempty"`
+	// ScannerLockouts are the scanner's locked-out channels (Hz) per band id
+	// ("custom" for a range without a band).
+	ScannerLockouts map[string][]uint32 `json:"scanner_lockouts,omitempty"`
+	// Autopilot configures the satellite pass autopilot (docs/autopilot.md).
+	Autopilot *Autopilot `json:"autopilot,omitempty"`
+	// Transcribe configures speech transcription (docs/transcription.md).
+	Transcribe *Transcribe `json:"transcribe,omitempty"`
+}
+
+// Autopilot holds the pass autopilot settings. Unset fields have defaults:
+// min_elevation 20 degrees and listen on.
+type Autopilot struct {
+	Enabled      bool     `json:"enabled"`
+	MinElevation *float64 `json:"min_elevation,omitempty"`
+	// Satellites are NORAD ids; empty means all.
+	Satellites []int `json:"satellites,omitempty"`
+	// Preempt lets the autopilot stop a running survey, scanner or decoder.
+	Preempt  bool  `json:"preempt"`
+	Listen   *bool `json:"listen,omitempty"`
+	RecordIQ bool  `json:"record_iq"`
+}
+
+// MinEl is the minimum maximum-elevation of a pass in degrees (default 20).
+func (a Autopilot) MinEl() float64 {
+	if a.MinElevation == nil {
+		return 20
+	}
+	return *a.MinElevation
+}
+
+// ListenOn reports whether the VFO follows the downlink (default true).
+func (a Autopilot) ListenOn() bool { return a.Listen == nil || *a.Listen }
+
+// Wants reports whether norad is selected (an empty list selects all).
+func (a Autopilot) Wants(norad int) bool {
+	if len(a.Satellites) == 0 {
+		return true
+	}
+	for _, n := range a.Satellites {
+		if n == norad {
+			return true
+		}
+	}
+	return false
+}
+
+// AutopilotSettings returns the autopilot settings with nothing nil.
+func (c Config) AutopilotSettings() Autopilot {
+	var a Autopilot
+	if c.Autopilot != nil {
+		a = *c.Autopilot
+	}
+	m, l := a.MinEl(), a.ListenOn()
+	a.MinElevation, a.Listen = &m, &l
+	if a.Satellites == nil {
+		a.Satellites = []int{}
+	}
+	return a
 }
 
 // Store loads and saves the config file.
@@ -74,6 +132,27 @@ func (s *Store) Get() Config {
 		a := *c.Antenna
 		c.Antenna = &a
 	}
+	if c.ScannerLockouts != nil {
+		m := make(map[string][]uint32, len(c.ScannerLockouts))
+		for k, v := range c.ScannerLockouts {
+			m[k] = append([]uint32(nil), v...)
+		}
+		c.ScannerLockouts = m
+	}
+	if c.Autopilot != nil {
+		a := *c.Autopilot
+		a.Satellites = append([]int(nil), a.Satellites...)
+		if a.MinElevation != nil {
+			v := *a.MinElevation
+			a.MinElevation = &v
+		}
+		if a.Listen != nil {
+			v := *a.Listen
+			a.Listen = &v
+		}
+		c.Autopilot = &a
+	}
+	c.Transcribe = c.Transcribe.clone()
 	return c
 }
 
@@ -85,6 +164,16 @@ func (c Config) Validate() error {
 		}
 		if r.Lon < -180 || r.Lon > 180 {
 			return errors.New("receiver.lon must be -180..180")
+		}
+	}
+	if a := c.Autopilot; a != nil {
+		if a.MinElevation != nil && (*a.MinElevation < 0 || *a.MinElevation > 90) {
+			return errors.New("autopilot.min_elevation must be 0..90")
+		}
+		for _, n := range a.Satellites {
+			if n <= 0 {
+				return errors.New("autopilot.satellites: NORAD ids must be positive")
+			}
 		}
 	}
 	return nil

@@ -37,10 +37,11 @@ func init() { gainTables["R828D"] = gainTables["R820T"] }
 
 // Config holds startup settings.
 type Config struct {
-	Synth      bool      // use the synthetic source instead of rtl_tcp
-	SynthFM    []SynthFM // extra FM signals for the synthetic source
-	File       string    // play back a cu8 recording instead of the dongle
-	RtlTcpBin  string    // path to rtl_tcp
+	Synth      bool         // use the synthetic source instead of rtl_tcp
+	SynthFM    []SynthFM    // extra FM signals for the synthetic source
+	SynthBurst []SynthBurst // bursty carriers for the synthetic source
+	File       string       // play back a cu8 recording instead of the dongle
+	RtlTcpBin  string       // path to rtl_tcp
 	RtlTcpPort int
 	CenterHz   uint32
 	SampleRate uint32
@@ -57,6 +58,23 @@ type SynthFM struct {
 	FreqHz float64
 	PCM    []int16
 	Rate   float64
+}
+
+// SynthBurst is a carrier that keys on and off in the synthetic source: silent
+// for OffS seconds, then on for OnS seconds, repeating. OffS 0 is continuous.
+type SynthBurst struct {
+	FreqHz float64
+	OnS    float64
+	OffS   float64
+	Amp    float64 // linear, full scale = 1; 0 = 0.05
+}
+
+// SpecFrame is one full-resolution spectrum frame (dB per bin, lowest frequency
+// first) with the tuning it was captured at.
+type SpecFrame struct {
+	DB         []float64
+	CenterHz   uint32
+	SampleRate uint32
 }
 
 // Meta describes the spectrum frames.
@@ -142,7 +160,9 @@ type Radio struct {
 	lastErr string
 	frames  chan []float64 // completed spectra, paced out by emit
 	pool    sync.Pool
-	hold    []float64 // max-hold spectrum since the last retune (RecentSpectrum)
+	hold    []float64              // max-hold spectrum since the last retune (RecentSpectrum)
+	specSub map[int]chan SpecFrame // SubscribeSpectrum consumers
+	nextSub int
 
 	demod     *dsp.Demod // listening VFO, nil when off
 	dm        DemodInfo
@@ -340,6 +360,13 @@ func (r *Radio) runOnce(ctx context.Context) error {
 		device, tuner = "recording: "+filepath.Base(r.cfg.File), "R820T"
 	} else if r.cfg.Synth {
 		syn := source.NewSynth(center, sr)
+		for _, b := range r.cfg.SynthBurst {
+			amp := b.Amp
+			if amp == 0 {
+				amp = 0.05
+			}
+			syn.AddBurst(b.FreqHz, b.OnS, b.OffS, amp)
+		}
 		for _, f := range r.cfg.SynthFM {
 			syn.AddFM(f.FreqHz, f.PCM, f.Rate, 3000, 2)
 		}
@@ -451,6 +478,12 @@ func (r *Radio) pushFrameLocked() {
 			r.hold[i] = max(r.hold[i], v)
 		}
 	}
+	for _, ch := range r.specSub { // copies, so subscribers may keep them
+		select {
+		case ch <- SpecFrame{DB: append([]float64(nil), db...), CenterHz: r.st.CenterHz, SampleRate: r.st.SampleRate}:
+		default: // subscriber behind: drop
+		}
+	}
 	select {
 	case r.frames <- db:
 	default: // consumer behind: drop
@@ -495,4 +528,29 @@ func (r *Radio) RecentSpectrum() (db []float64, startHz, binHz float64, ok bool)
 	}
 	binHz = float64(r.st.SampleRate) / float64(len(r.hold))
 	return append([]float64(nil), r.hold...), float64(r.st.CenterHz) - float64(r.st.SampleRate)/2, binHz, true
+}
+
+// SubscribeSpectrum delivers a copy of every full-resolution spectrum frame (about
+// FPS per second, in dB) on the returned channel. Frames are dropped when the
+// consumer falls behind. Frames carry the center and rate they were captured at,
+// so a consumer can ignore frames from before a retune. Call cancel to unsubscribe;
+// it closes the channel.
+func (r *Radio) SubscribeSpectrum() (frames <-chan SpecFrame, cancel func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.specSub == nil {
+		r.specSub = map[int]chan SpecFrame{}
+	}
+	r.nextSub++
+	id := r.nextSub
+	ch := make(chan SpecFrame, 16)
+	r.specSub[id] = ch
+	return ch, func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if c, ok := r.specSub[id]; ok {
+			delete(r.specSub, id)
+			close(c)
+		}
+	}
 }

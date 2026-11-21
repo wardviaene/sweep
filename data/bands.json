@@ -170,6 +170,102 @@
           "mode": "am"
         },
         {
+          "mhz": 122.0,
+          "name": "Flight service (EFAS, legacy)",
+          "mode": "am",
+          "regions": [
+            "us"
+          ]
+        },
+        {
+          "mhz": 122.7,
+          "name": "UNICOM",
+          "mode": "am",
+          "regions": [
+            "us"
+          ]
+        },
+        {
+          "mhz": 122.725,
+          "name": "UNICOM",
+          "mode": "am",
+          "regions": [
+            "us"
+          ]
+        },
+        {
+          "mhz": 122.75,
+          "name": "Air-to-air (fixed wing)",
+          "mode": "am",
+          "regions": [
+            "us"
+          ]
+        },
+        {
+          "mhz": 122.8,
+          "name": "UNICOM",
+          "mode": "am",
+          "regions": [
+            "us"
+          ]
+        },
+        {
+          "mhz": 122.85,
+          "name": "MULTICOM",
+          "mode": "am",
+          "regions": [
+            "us"
+          ]
+        },
+        {
+          "mhz": 122.9,
+          "name": "MULTICOM (no tower/no UNICOM)",
+          "mode": "am",
+          "regions": [
+            "us"
+          ]
+        },
+        {
+          "mhz": 122.975,
+          "name": "UNICOM",
+          "mode": "am",
+          "regions": [
+            "us"
+          ]
+        },
+        {
+          "mhz": 123.0,
+          "name": "UNICOM",
+          "mode": "am",
+          "regions": [
+            "us"
+          ]
+        },
+        {
+          "mhz": 123.025,
+          "name": "Air-to-air (helicopters)",
+          "mode": "am",
+          "regions": [
+            "us"
+          ]
+        },
+        {
+          "mhz": 123.05,
+          "name": "UNICOM",
+          "mode": "am",
+          "regions": [
+            "us"
+          ]
+        },
+        {
+          "mhz": 123.075,
+          "name": "UNICOM",
+          "mode": "am",
+          "regions": [
+            "us"
+          ]
+        },
+        {
           "mhz": 123.45,
           "name": "Air-to-air (unofficial)",
           "mode": "am"

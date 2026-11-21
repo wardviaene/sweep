@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { DecoderName, DecoderOpts, Receiver, Status } from "./api";
+import type { DecoderName, DecoderOpts, Receiver, Status, Transcript } from "./api";
+import { TranscriptsView } from "./TranscriptsView";
 import type { DecEvent } from "./useEvents";
 import type { RegisterCenter } from "./mapkit";
 import { useAircraft } from "./useAircraft";
@@ -19,10 +20,15 @@ import { SondeView } from "./SondeView";
 import { DsdView } from "./DsdView";
 import { MetersView } from "./MetersView";
 import { SatellitesView } from "./SatellitesView";
+import { SstvView } from "./SstvView";
+import { useSstv } from "./useSstv";
+import type { AudioApi } from "./useAudio";
 
 type Pick = DecoderName | "none";
-const PICKS: Pick[] = ["none", "rtl_433", "meters", "adsb", "uat", "aprs", "ais", "packet", "radiosonde", "dsd"];
-const HAS_FREQ = new Set<Pick>(["packet", "dsd", "radiosonde"]);
+const PICKS: Pick[] = ["none", "rtl_433", "meters", "adsb", "uat", "aprs", "ais", "packet", "radiosonde", "dsd", "sstv"];
+const HAS_FREQ = new Set<Pick>(["packet", "dsd", "radiosonde", "sstv"]);
+const SSTV_DEFAULT_MHZ = "145.800";
+const SSTV_MODES = ["auto", "Robot36", "PD90", "PD120", "PD180", "Martin1", "Scottie1"];
 const MAX_ROWS = 200;
 const SIZE_KEY = "sweep.decExpanded";
 
@@ -57,13 +63,15 @@ interface Props {
   focus: { decoder: DecoderName; seq: number } | null;
   /** tune to hz and demodulate NFM (satellite downlinks) */
   onListen: (hz: number) => void;
+  audio: AudioApi;
+  transcripts: Transcript[];
 }
 
-export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, meterIds, receiver, registerCenter, onOpenSettings, surveyLine, onOpenSurvey, focus, onListen }: Props) {
+export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, meterIds, receiver, registerCenter, onOpenSettings, surveyLine, onOpenSurvey, focus, onListen, audio, transcripts }: Props) {
   const [open, setOpen] = useState(true);
   const [expanded, setExpanded] = useState(loadExpanded);
   const [tab, setTab] = useState<"view" | "raw">("view");
-  const [section, setSection] = useState<"decoders" | "satellites">("decoders");
+  const [section, setSection] = useState<"decoders" | "satellites" | "transcripts">("decoders");
   const [pick, setPick] = useState<Pick>("none");
   const dec = status?.decoder;
   const running = !!dec?.running && dec.name !== "none";
@@ -78,6 +86,8 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
   const sondes = useSondes(events);
   const dsd = useDsd(events);
   const meters = useMeters(events);
+  const sstv = useSstv(events);
+  const [sstvMode, setSstvMode] = useState("auto");
   const [freqText, setFreqText] = useState<string | null>(null); // null = untouched (follows the VFO for packet/dsd)
   const [baud, setBaud] = useState(1200);
   const [startedBaud, setStartedBaud] = useState<number | null>(null);
@@ -107,7 +117,7 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
 
   useEffect(() => setFreqText(null), [pick]);
   const hasFreq = HAS_FREQ.has(pick);
-  const freqShown = freqText ?? (pick !== "radiosonde" && vfoHz !== null ? String(+(vfoHz / 1e6).toFixed(6)) : "");
+  const freqShown = freqText ?? (pick === "sstv" ? SSTV_DEFAULT_MHZ : pick !== "radiosonde" && vfoHz !== null ? String(+(vfoHz / 1e6).toFixed(6)) : "");
   const freqMhz = freqShown.trim() === "" ? null : Number(freqShown);
   const freqBad = freqShown.trim() !== "" && (freqMhz === null || !Number.isFinite(freqMhz) || freqMhz < 1 || freqMhz > 6000);
 
@@ -116,6 +126,7 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
     const opts: DecoderOpts = {};
     if (hasFreq && freqMhz !== null && !freqBad) opts.freq_hz = Math.round(freqMhz * 1e6);
     if (pick === "packet") opts.baud = baud;
+    if (pick === "sstv") opts.mode = sstvMode;
     setStartedBaud(pick === "packet" ? baud : null);
     onSet(pick, opts);
   };
@@ -136,6 +147,7 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
         <span className="seg">
           <button className={section === "decoders" ? "on" : ""} onClick={() => setSection("decoders")}>decoders</button>
           <button className={section === "satellites" ? "on" : ""} onClick={() => setSection("satellites")}>satellites</button>
+          <button className={section === "transcripts" ? "on" : ""} onClick={() => setSection("transcripts")}>transcripts</button>
         </span>
         {section === "decoders" && (<>
         <span className="label">decoder</span>
@@ -162,6 +174,14 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
                 <select value={baud} onChange={(e) => setBaud(Number(e.target.value))}>
                   <option value={1200}>1200</option>
                   <option value={9600}>9600</option>
+                </select>
+              </label>
+            )}
+            {pick === "sstv" && (
+              <label className="dim">
+                mode{" "}
+                <select value={sstvMode} onChange={(e) => setSstvMode(e.target.value)}>
+                  {SSTV_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
                 </select>
               </label>
             )}
@@ -204,6 +224,8 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
             receiver={receiver}
             onOpenSettings={onOpenSettings}
             onListen={onListen}
+            audio={audio}
+            sstvImages={sstv.images}
             onDecode={(hz, b) => {
               setBaud(b);
               setStartedBaud(b);
@@ -213,6 +235,11 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
               onSet("packet", { freq_hz: hz, baud: b });
             }}
           />
+        </div>
+      )}
+      {open && section === "transcripts" && (
+        <div className="dec-body">
+          <TranscriptsView items={transcripts} />
         </div>
       )}
       {open && section === "decoders" && (
@@ -249,6 +276,7 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
                 />
               )}
               {pick === "radiosonde" && <SondeView sondes={sondes} receiver={receiver} registerCenter={registerCenter} />}
+              {pick === "sstv" && <SstvView view={sstv} />}
               {pick === "dsd" && <DsdView calls={dsd} />}
               {pick === "meters" && <MetersView view={meters} meterIds={meterIds} onOpenSettings={onOpenSettings} />}
               {pick === "ais" && <AisView vessels={vessels} registerCenter={registerCenter} />}

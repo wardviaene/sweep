@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { DemodMode, Status } from "./api";
+import type { DemodMode, Status, Transcript } from "./api";
+import { TranscribeControl } from "./TranscribeControl";
 import type { AudioApi } from "./useAudio";
 import type { DemodApi } from "./useDemod";
 import { roundVfo } from "./SpectrumView";
@@ -8,7 +9,7 @@ const MODES: DemodMode[] = ["off", "nfm", "am", "usb", "lsb"];
 const SQ_MIN = -100;
 const SQ_MAX = -20;
 
-export function DemodControls({ status, demod, audio }: { status: Status | null; demod: DemodApi; audio: AudioApi }) {
+export function DemodControls({ status, demod, audio, locked = false, transcripts }: { status: Status | null; demod: DemodApi; audio: AudioApi; locked?: boolean; transcripts: Transcript[] }) {
   const d = status?.demod;
   const mode = d?.mode ?? "off";
   const sqDb = d?.squelch_db ?? null;
@@ -67,7 +68,7 @@ export function DemodControls({ status, demod, audio }: { status: Status | null;
       <span className="sep" />
       <span className="item">
         <span className="label">demod</span>{" "}
-        <select value={mode} disabled={!status} onChange={(e) => changeMode(e.target.value as DemodMode)}>
+        <select value={mode} disabled={!status || locked} onChange={(e) => changeMode(e.target.value as DemodMode)}>
           {MODES.map((m) => (
             <option key={m} value={m}>{m === "off" ? "off" : m.toUpperCase()}</option>
           ))}
@@ -78,7 +79,7 @@ export function DemodControls({ status, demod, audio }: { status: Status | null;
         <input
           className="freq narrow"
           value={bwText}
-          disabled={mode === "off"}
+          disabled={mode === "off" || locked}
           spellCheck={false}
           onFocus={() => setBwFocus(true)}
           onBlur={commitBw}
@@ -96,7 +97,7 @@ export function DemodControls({ status, demod, audio }: { status: Status | null;
           max={SQ_MAX}
           step={1}
           value={sq}
-          disabled={mode === "off" || sqDb === null}
+          disabled={mode === "off" || sqDb === null || locked}
           onPointerDown={() => (sqDrag.current = true)}
           onPointerUp={() => (sqDrag.current = false)}
           onChange={(e) => {
@@ -109,7 +110,7 @@ export function DemodControls({ status, demod, audio }: { status: Status | null;
           <input
             type="checkbox"
             checked={sqDb === null}
-            disabled={mode === "off"}
+            disabled={mode === "off" || locked}
             onChange={(e) => demod.send({ squelch_db: e.target.checked ? null : sq }, true)}
           />
           off
@@ -131,6 +132,7 @@ export function DemodControls({ status, demod, audio }: { status: Status | null;
           onChange={(e) => audio.setVolume(Number(e.target.value))}
         />
       </span>
+      <TranscribeControl enabled={mode !== "off"} transcripts={transcripts} />
       <span className="item">
         <span className="meter"><div ref={fillRef} className="fill" /></span> <span ref={sqlRef} className="dim" />
         {audio.on && audio.conn !== "open" && <span className="conn-connecting"> audio link {audio.conn}</span>}

@@ -71,7 +71,15 @@ function fitCanvas(c: HTMLCanvasElement): Size {
   return { w: r.width, h: r.height };
 }
 
+/** Scanner overlay: the window being watched and the channel that is active. */
+export interface ScanOverlay {
+  lo_hz: number;
+  hi_hz: number;
+  active_hz: number | null;
+}
+
 interface Props {
+  scan?: ScanOverlay | null;
   stream: SpectrumStream;
   meta: Meta | null;
   bandViews: BandView[];
@@ -81,7 +89,11 @@ interface Props {
   onWheel: (dir: 1 | -1) => void; // +1 = step up
 }
 
-export function SpectrumView({ stream, meta, bandViews, vfo, onSetVfo, onTuneHz, onWheel }: Props) {
+export function SpectrumView({ stream, meta, bandViews, vfo, scan = null, onSetVfo, onTuneHz, onWheel }: Props) {
+  const scanRef = useRef<ScanOverlay | null>(scan);
+  const scanWinRef = useRef<HTMLDivElement>(null);
+  const scanHitRef = useRef<HTMLDivElement>(null);
+  const placeScan = useRef<() => void>(() => {});
   const onVfoRef = useRef(onSetVfo);
   onVfoRef.current = onSetVfo;
   const vfoRef = useRef<Vfo | null>(vfo);
@@ -122,7 +134,13 @@ export function SpectrumView({ stream, meta, bandViews, vfo, onSetVfo, onTuneHz,
   }, [vfo?.mode, vfo?.freq_hz, vfo?.bandwidth_hz]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    scanRef.current = scan;
+    placeScan.current();
+  }, [scan?.lo_hz, scan?.hi_hz, scan?.active_hz]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
     placeVfo.current();
+    placeScan.current();
   }, [meta?.center_hz, meta?.sample_rate]);
 
   useEffect(() => {
@@ -302,6 +320,30 @@ export function SpectrumView({ stream, meta, bandViews, vfo, onSetVfo, onTuneHz,
     };
     placeVfo.current();
 
+    const swin = scanWinRef.current!;
+    const shit = scanHitRef.current!;
+    placeScan.current = () => {
+      const m = metaRef.current;
+      const sc = scanRef.current;
+      if (!m || !sc) {
+        swin.style.display = "none";
+        shit.style.display = "none";
+        return;
+      }
+      const lo = m.center_hz - m.sample_rate / 2;
+      const pct = (hz: number) => ((hz - lo) / m.sample_rate) * 100;
+      const a = Math.max(0, pct(sc.lo_hz));
+      const b = Math.min(100, pct(sc.hi_hz));
+      swin.style.display = b > a ? "block" : "none";
+      swin.style.left = `${a}%`;
+      swin.style.width = `${Math.max(0, b - a)}%`;
+      const h = sc.active_hz;
+      const x = h === null ? -1 : pct(h);
+      shit.style.display = x >= 0 && x <= 100 ? "block" : "none";
+      shit.style.left = `${x}%`;
+    };
+    placeScan.current();
+
     let dragTimer: number | undefined;
     let dragHz = 0;
     let dragging = false;
@@ -462,6 +504,8 @@ export function SpectrumView({ stream, meta, bandViews, vfo, onSetVfo, onTuneHz,
       <canvas ref={specRef} className="spec" />
       <canvas ref={axisRef} className="axis" style={{ height: AXIS_H }} />
       <canvas ref={wfRef} className="wf" />
+      <div ref={scanWinRef} className="scn-win" style={{ display: "none" }} />
+      <div ref={scanHitRef} className="scn-hit" style={{ display: "none" }} />
       <div ref={layerRef} className="vfo-layer">
         <div ref={vfoBandRef} className="vfo-band" />
         <div ref={vfoLineRef} className="vfo-line" />

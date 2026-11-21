@@ -58,6 +58,9 @@ type Deps struct {
 	Config   *config.Store
 	// Label names a carrier frequency (catalog channel or visible satellite); optional.
 	Label func(freqHz float64) string
+	// Clip records a listen hold for transcription; the returned function ends
+	// it. Optional (may return nil).
+	Clip func(freqHz uint32, label, mode string, start time.Time) func(end time.Time)
 }
 
 const scanDwellMS = 500
@@ -336,6 +339,11 @@ func (r *Runner) listenStep(ctx context.Context, i int) {
 		label = d.Label(best.FreqHz)
 	}
 	t0 := time.Now()
+	if d.Clip != nil {
+		if end := d.Clip(freq, label, mode, t0); end != nil {
+			defer func() { end(time.Now()) }()
+		}
+	}
 	r.mu.Lock()
 	r.st.Listening = &Listening{Step: s.ID, FreqHz: freq, Mode: mode, Label: label, Seconds: hold,
 		Started: float64(t0.UnixMilli()) / 1e3}

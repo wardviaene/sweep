@@ -14,6 +14,7 @@ import (
 	"github.com/wardviaene/sweep/internal/config"
 	"github.com/wardviaene/sweep/internal/decoder"
 	"github.com/wardviaene/sweep/internal/radio"
+	"github.com/wardviaene/sweep/internal/scanner"
 	"github.com/wardviaene/sweep/internal/survey"
 )
 
@@ -41,7 +42,9 @@ func newEnv(t *testing.T) *testEnv {
 	dec := decoder.NewManager(r, ev)
 	dec.ToolDirs = []string{t.TempDir()}
 	t.Cleanup(dec.Stop)
-	srv := httptest.NewServer(Handler(Deps{Radio: r, Hub: hub, Audio: audio, Decoders: dec, Events: ev, Config: store,
+	sc := scanner.New(scanner.Deps{Radio: r, Decoders: dec, Config: store})
+	t.Cleanup(func() { sc.Stop() })
+	srv := httptest.NewServer(Handler(Deps{Scanner: sc, Radio: r, Hub: hub, Audio: audio, Decoders: dec, Events: ev, Config: store,
 		RecordDir: t.TempDir(), Survey: survey.New(survey.Deps{Radio: r, Spectrum: hub, Decoders: dec, Config: store})}))
 	t.Cleanup(srv.Close)
 	waitFor(t, func() bool { _, _, _, err := hub.Aggregate(1, "max"); return err == nil })

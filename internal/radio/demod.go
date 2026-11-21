@@ -43,6 +43,7 @@ type DemodRequest struct {
 func (r *Radio) SetDemod(req DemodRequest) (Status, error) {
 	r.mu.Lock()
 	dm := r.dm
+	rebuild := false
 	if req.Mode != nil {
 		if !dsp.ValidMode(*req.Mode) {
 			r.mu.Unlock()
@@ -51,6 +52,7 @@ func (r *Radio) SetDemod(req DemodRequest) (Status, error) {
 		if *req.Mode != dm.Mode && req.BandwidthHz == nil {
 			dm.BandwidthHz = dsp.DefaultBandwidth(dsp.Mode(*req.Mode))
 		}
+		rebuild = rebuild || dm.Mode != *req.Mode
 		dm.Mode = *req.Mode
 	}
 	if req.BandwidthHz != nil {
@@ -58,6 +60,7 @@ func (r *Radio) SetDemod(req DemodRequest) (Status, error) {
 			r.mu.Unlock()
 			return Status{}, fmt.Errorf("bandwidth_hz must be 500..200000")
 		}
+		rebuild = rebuild || dm.BandwidthHz != *req.BandwidthHz
 		dm.BandwidthHz = *req.BandwidthHz
 	}
 	if req.SetSquelch {
@@ -75,7 +78,13 @@ func (r *Radio) SetDemod(req DemodRequest) (Status, error) {
 		}
 	}
 	r.dm = dm
-	r.rebuildDemodLocked()
+	if !rebuild && retune == nil && r.demod != nil && dm.Mode != "off" && dm.Mode != "" {
+		// Only the frequency moved inside the span: shift the channel without
+		// resetting the filters (Doppler tracking calls this every second).
+		r.demod.SetOffset(float64(dm.FreqHz) - float64(r.st.CenterHz))
+	} else {
+		r.rebuildDemodLocked()
+	}
 	r.mu.Unlock()
 	if retune != nil {
 		if _, err := r.Tune(TuneRequest{FreqHz: retune}); err != nil {
@@ -213,6 +222,27 @@ func (r *Radio) AddAudioTap(freqHz uint32, mode dsp.Mode, bw float64, raw bool) 
 	t.rebuild(r)
 	r.taps[r.nextTap] = t
 	return r.nextTap, t.pcm, int(t.demod.Rate())
+}
+
+// SetTapFreq moves an audio tap's channel to freqHz without restarting it:
+// the filters keep their state and the audio channel stays open (Doppler
+// tracking). The frequency must lie inside the current span.
+func (r *Radio) SetTapFreq(id int, freqHz uint32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.taps[id]
+	if !ok {
+		return fmt.Errorf("tap %d: not found", id)
+	}
+	if t.demod == nil {
+		return fmt.Errorf("tap %d: raw IQ tap has no channel to retune", id)
+	}
+	if !r.inSpanLocked(freqHz) {
+		return fmt.Errorf("tap %d: %d Hz is outside the %d Hz span at %d Hz", id, freqHz, r.st.SampleRate, r.st.CenterHz)
+	}
+	t.freqHz = freqHz
+	t.demod.SetOffset(float64(freqHz) - float64(r.st.CenterHz))
+	return nil
 }
 
 // RemoveTap unsubscribes a tap and closes its channel.

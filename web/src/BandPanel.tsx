@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { antennaFit, bandChannels, bandRange, FIT_TEXT, type Antenna, type Band, type Catalog, type Channel } from "./bands";
 import type { DecoderName, DecoderOpts } from "./api";
+import { isVoiceBand } from "./ScannerPanel";
 
 type Filter = "all" | "stock" | "hf" | "fits";
 
@@ -16,6 +17,8 @@ interface Props {
   error: string | null;
   antenna: Antenna | null;
   onOpenSettings: () => void;
+  /** start the scanner on a voice band */
+  onScan?: (b: Band) => void;
 }
 
 const FREQ_DECODERS = new Set<DecoderName>(["packet", "dsd", "radiosonde"]);
@@ -109,7 +112,7 @@ export function BandPanel(p: Props) {
   );
 }
 
-function Detail({ band: b, region, onJump, onChannel, onDecoder }: Props & { band: Band }) {
+function Detail({ band: b, region, onJump, onChannel, onDecoder, onScan }: Props & { band: Band }) {
   const [copied, setCopied] = useState(false);
   const chans = bandChannels(b, region);
   const copy = () => {
@@ -126,6 +129,9 @@ function Detail({ band: b, region, onJump, onChannel, onDecoder }: Props & { ban
     <div className="detail">
       <div className="btns">
         <button onClick={() => onJump(b)} title={`Tune to ${fmt(b.tune_mhz)} MHz`}>Jump</button>
+        {onScan && isVoiceBand(b) && (
+          <button className={b.id === "air" ? "primary" : ""} onClick={() => onScan(b)} title="Watch the band and jump to each transmission">⟲ Scan for voice</button>
+        )}
         {b.decoder && <button onClick={() => onDecoder(b.decoder!, optsFor(b.decoder!, b.tune_mhz))}>Start {b.decoder}</button>}
       </div>
       <Field k="on air" v={b.on_air} />
