@@ -131,8 +131,8 @@ type Radio struct {
 // New creates a radio; call Run to start it.
 func New(cfg Config, sink Sink) *Radio {
 	return &Radio{
-		cfg:  cfg,
-		sink: sink,
+		cfg:    cfg,
+		sink:   sink,
 		spec:   dsp.NewSpectrum(cfg.FFTSize),
 		frames: make(chan []float64, 4),
 		st: Status{
@@ -264,7 +264,7 @@ func (r *Radio) Run(ctx context.Context) {
 
 func (r *Radio) runOnce(ctx context.Context) error {
 	r.mu.Lock()
-	center, sr, gain := r.st.CenterHz, r.st.SampleRate, r.st.GainDB
+	center, sr := r.st.CenterHz, r.st.SampleRate
 	r.mu.Unlock()
 
 	var src Source
@@ -293,7 +293,6 @@ func (r *Radio) runOnce(ctx context.Context) error {
 	if r.st.SampleRate != sr {
 		_ = src.SetSampleRate(r.st.SampleRate)
 	}
-	_ = gain
 	if err := src.SetGain(r.st.GainDB); err != nil {
 		r.mu.Unlock()
 		return err
