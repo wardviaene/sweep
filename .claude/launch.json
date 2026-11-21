@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sweep-synth",
+      "runtimeExecutable": "make",
+      "runtimeArgs": ["dev-synth"],
+      "port": 5173
+    },
+    {
+      "name": "sweep",
+      "runtimeExecutable": "make",
+      "runtimeArgs": ["dev"],
+      "port": 5173
+    }
+  ]
+}
