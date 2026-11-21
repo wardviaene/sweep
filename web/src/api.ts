@@ -97,3 +97,93 @@ export function setDecoder(decoder: DecoderName | "none", region?: string): Prom
 export function getBands(signal?: AbortSignal): Promise<import("./bands").Catalog> {
   return request("/api/bands", { signal });
 }
+
+// --- scan / record ---
+
+export interface ScanPeak {
+  freq_hz: number;
+  db: number;
+  snr_db: number;
+  spur: boolean;
+}
+
+export interface ScanResult {
+  start_hz: number;
+  stop_hz: number;
+  duration_s: number;
+  steps: { center_hz: number; floor_db: number }[];
+  peaks: ScanPeak[];
+}
+
+export interface ScanParams {
+  start_hz: number;
+  stop_hz: number;
+  dwell_ms: number;
+  min_snr: number;
+  max?: number;
+}
+
+/** Blocks for the whole scan (seconds). */
+export function scan(p: ScanParams, signal?: AbortSignal): Promise<ScanResult> {
+  return request<ScanResult>("/api/scan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(p),
+    signal,
+  });
+}
+
+export interface RecordResult {
+  path: string;
+  bytes: number;
+  seconds: number;
+  center_hz: number;
+  sample_rate: number;
+}
+
+/** Blocks while recording. */
+export function record(seconds: number): Promise<RecordResult> {
+  return post<RecordResult>("/api/record", { seconds });
+}
+
+// --- config ---
+
+export interface Receiver {
+  lat: number;
+  lon: number;
+  alt_m?: number;
+}
+
+export interface Config {
+  receiver: Receiver | null;
+}
+
+/** Resolves null when the backend has no /api/config (404). */
+export async function getConfig(signal?: AbortSignal): Promise<Config | null> {
+  const res = await fetch("/api/config", { signal });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`/api/config: ${res.status} ${await res.text()}`);
+  const c = (await res.json()) as Partial<Config>;
+  return { receiver: c.receiver ?? null };
+}
+
+export async function putConfig(receiver: Receiver | null): Promise<Config> {
+  const res = await fetch("/api/config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ receiver }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    let msg = text;
+    try {
+      const j = JSON.parse(text) as { error?: string };
+      if (j.error) msg = j.error;
+    } catch {
+      /* not JSON */
+    }
+    throw new Error(msg || `status ${res.status}`);
+  }
+  const c = JSON.parse(text) as Partial<Config>;
+  return { receiver: c.receiver ?? null };
+}

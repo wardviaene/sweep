@@ -14,6 +14,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/wardviaene/sweep/data"
+	"github.com/wardviaene/sweep/internal/config"
 	"github.com/wardviaene/sweep/internal/decoder"
 	"github.com/wardviaene/sweep/internal/radio"
 )
@@ -109,6 +110,7 @@ type Deps struct {
 	Audio     *AudioHub
 	Decoders  *decoder.Manager
 	Events    *decoder.Events
+	Config    *config.Store
 	Static    fs.FS  // built web UI, may be nil
 	RecordDir string // where POST /api/record writes cu8 files
 }
@@ -131,6 +133,21 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, r.Status())
+	})
+	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, d.Config.Get())
+	})
+	mux.HandleFunc("PUT /api/config", func(w http.ResponseWriter, req *http.Request) {
+		var c config.Config
+		if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&c); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := d.Config.Set(c); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, d.Config.Get())
 	})
 	mux.HandleFunc("POST /api/scan", scanHandler(d))
 	mux.HandleFunc("POST /api/record", recordHandler(d, d.RecordDir))

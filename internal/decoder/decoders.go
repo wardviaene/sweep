@@ -109,6 +109,11 @@ func (m *Manager) runADSB(ctx context.Context, st *Status) error {
 	cmd := exec.CommandContext(ctx, bin, "--ifile", "-", "--iformat", "UC8", "--quiet",
 		"--net", "--net-bind-address", "127.0.0.1", "--net-sbs-port", port,
 		"--net-ri-port", "0", "--net-ro-port", "0", "--net-bi-port", "0", "--net-bo-port", "0")
+	if m.Receiver != nil {
+		if lat, lon, ok := m.Receiver(); ok {
+			cmd.Args = append(cmd.Args, "--lat", strconv.FormatFloat(lat, 'f', 5, 64), "--lon", strconv.FormatFloat(lon, 'f', 5, 64))
+		}
+	}
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go m.readSBS(cctx, "127.0.0.1:"+port)

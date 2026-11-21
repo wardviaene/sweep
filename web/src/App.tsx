@@ -11,6 +11,10 @@ import { useAudio } from "./useAudio";
 import { useDemod } from "./useDemod";
 import { useBands } from "./useBands";
 import { useEvents } from "./useEvents";
+import { useConfig } from "./useConfig";
+import { ToolsMenu } from "./ToolsMenu";
+import { SettingsMenu } from "./SettingsMenu";
+import type { LatLon } from "./geo";
 import { fmtMHz } from "./draw";
 import { setDecoder, type DecoderName } from "./api";
 import { bandViews, loadRegion, saveRegion, type Band, type Channel } from "./bands";
@@ -23,6 +27,11 @@ export function App() {
   const audio = useAudio();
   const { catalog, error: bandsError } = useBands();
   const events = useEvents();
+  const config = useConfig();
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [mapCenter, setMapCenter] = useState<(() => LatLon) | null>(null);
+  const registerCenter = useCallback((g: (() => LatLon) | null) => setMapCenter(() => g), []);
   const [step, setStep] = useState(100e3);
   const [regionPref, setRegionPref] = useState<string | null>(loadRegion);
   const [actErr, setActErr] = useState<string | null>(null);
@@ -106,6 +115,8 @@ export function App() {
       </header>
       <Controls status={status} centerHz={status?.center_hz ?? center} tuner={tuner} step={step} setStep={setStep}>
         <DemodControls status={status} demod={demod} audio={audio} />
+        <ToolsMenu status={status} bandViews={views} tuner={tuner} demod={demod} open={toolsOpen} setOpen={setToolsOpen} />
+        <SettingsMenu config={config} open={settingsOpen} setOpen={setSettingsOpen} mapCenter={mapCenter} />
       </Controls>
       <div className="main">
         <BandPanel
@@ -129,7 +140,15 @@ export function App() {
             onTuneHz={tuner.setFreq}
             onWheel={(dir) => tuner.shiftFreq(dir * step)}
           />
-          <DecoderPanel status={status} events={events} onSet={startDecoder} error={actErr} />
+          <DecoderPanel
+            status={status}
+            events={events}
+            onSet={startDecoder}
+            error={actErr}
+            receiver={config.receiver}
+            registerCenter={registerCenter}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
         </div>
       </div>
     </div>

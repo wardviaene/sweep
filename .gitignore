@@ -5,3 +5,7 @@
 .DS_Store
 /HANDOFF.md
 /recordings/
+# local settings with the receiver location: never commit
+/config.json
+/sweep-config.json
+*.local.json

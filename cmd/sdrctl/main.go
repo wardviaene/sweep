@@ -143,6 +143,46 @@ func init() {
 	}}
 }
 
+func init() {
+	commands["location"] = command{"location [<lat> <lon> [alt_m] | clear]   (receiver location, stored locally by sdrd)", func(a []string) error {
+		switch {
+		case len(a) == 0:
+			return get("/api/config", nil)
+		case len(a) == 1 && a[0] == "clear":
+			return put("/api/config", map[string]any{"receiver": nil})
+		case len(a) == 2 || len(a) == 3:
+			var v [3]float64
+			for i, x := range a {
+				f, err := strconv.ParseFloat(x, 64)
+				if err != nil {
+					return fmt.Errorf("%q: not a number", x)
+				}
+				v[i] = f
+			}
+			r := map[string]any{"lat": v[0], "lon": v[1]}
+			if len(a) == 3 {
+				r["alt_m"] = v[2]
+			}
+			return put("/api/config", map[string]any{"receiver": r})
+		}
+		return usageErr("location")
+	}}
+}
+
+func put(path string, body any) error {
+	b, _ := json.Marshal(body)
+	req, err := http.NewRequest(http.MethodPut, "http://"+addr+path, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("sdrd not reachable at %s: %w", addr, err)
+	}
+	return output(resp)
+}
+
 func cmdListen(a []string) error {
 	if len(a) < 1 || strings.HasPrefix(a[0], "-") {
 		return usageErr("listen")

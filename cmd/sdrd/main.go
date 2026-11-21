@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wardviaene/sweep/internal/config"
 	"github.com/wardviaene/sweep/internal/decoder"
 	"github.com/wardviaene/sweep/internal/radio"
 	"github.com/wardviaene/sweep/internal/server"
@@ -29,6 +30,7 @@ func main() {
 	freq := flag.Float64("freq", 433.92e6, "initial center frequency in Hz")
 	rate := flag.Uint("rate", 2_048_000, "initial sample rate")
 	gain := flag.String("gain", "29.7", "initial tuner gain in dB, or auto (auto lifts the noise floor on the R820T)")
+	cfgPath := flag.String("config", config.DefaultPath(), "local config file (receiver location); keep it out of the repo")
 	recDir := flag.String("record-dir", "recordings", "directory for IQ recordings (POST /api/record)")
 	iqFreq := flag.Float64("iq-freq", 0, "with -iq: center frequency of the recording in Hz (default: from the file name)")
 	flag.StringVar(&cfg.File, "iq", "", "play back a cu8 recording (looping) instead of using the dongle")
@@ -90,11 +92,21 @@ func main() {
 	r := radio.New(cfg, hub, audio)
 	go r.Run(ctx)
 
+	store, err := config.Open(*cfgPath)
+	if err != nil {
+		log.Fatal(err)
+	}
 	events := decoder.NewEvents()
 	decoders := decoder.NewManager(r, events)
 	decoders.SBSPort = *sbsPort
+	decoders.Receiver = func() (float64, float64, bool) {
+		if r := store.Get().Receiver; r != nil {
+			return r.Lat, r.Lon, true
+		}
+		return 0, 0, false
+	}
 	defer decoders.Stop()
-	deps := server.Deps{Radio: r, Hub: hub, Audio: audio, Decoders: decoders, Events: events, RecordDir: *recDir}
+	deps := server.Deps{Radio: r, Hub: hub, Audio: audio, Decoders: decoders, Events: events, RecordDir: *recDir, Config: store}
 	if *web != "" {
 		if st, err := os.Stat(*web); err == nil && st.IsDir() {
 			deps.Static = os.DirFS(*web)

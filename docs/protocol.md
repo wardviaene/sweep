@@ -122,3 +122,28 @@ Event envelope:
 - `aprs`, kind `message`: `{"raw": "N0CALL-9>APRS,WIDE2-1:!4903.50N/07201.75W>...", "from": "N0CALL-9", "to": "APRS", "path": ["WIDE2-1"], "info": "!4903.50N/07201.75W>...", "lat": 49.058, "lon": -72.029, "comment": "..."}` (`lat`/`lon`/`comment` only for uncompressed position reports).
 - `ais`, kind `message`: `{"nmea": "!AIVDM,1,1,,A,...", "type": 1, "mmsi": 366123456, "lat": 37.8, "lon": -122.4, "sog": 12.3, "cog": 87.0, "heading": 88, "name": "..." , "callsign": "...", "shiptype": 70}` (fields present when the message type carries them).
 - any decoder, kind `log`: `{"line": "..."}` for tool stderr worth showing (startup errors etc).
+
+## Scan and record
+
+### `POST /api/scan`
+Body: `{"start_hz": 430000000, "stop_hz": 440000000, "dwell_ms": 500, "min_snr": 10, "max": 50}` (`dwell_ms` 100-5000, default 500; `min_snr` default 10; `max` default 50). Blocks until the scan finishes (about `steps * (dwell_ms + 100) ms`; one step covers 80% of the sample rate). Fails with 400 while a decoder is running or another scan/recording is active. The original center frequency is restored afterwards.
+```json
+{"start_hz": 430000000, "stop_hz": 440000000, "duration_s": 7.2,
+ "steps": [{"center_hz": 430819200, "floor_db": -72.1}],
+ "peaks": [{"freq_hz": 433920000, "db": -40.2, "snr_db": 31.0, "spur": false}]}
+```
+
+### `POST /api/record`
+Body: `{"seconds": 5}` (0.1-60). Blocks while recording raw cu8 IQ at the current center and rate, then returns
+`{"path": "/abs/path/recordings/20261121-130038_433920000Hz_2048000sps.cu8", "bytes": 20480000, "seconds": 5, "center_hz": 433920000, "sample_rate": 2048000}`. 409 if a scan or recording is already running. Play back with `sdrd -iq <path>`.
+
+## Config: receiver location
+
+### `GET /api/config`
+```json
+{"receiver": {"lat": 12.34, "lon": 56.78, "alt_m": 100}}
+```
+`receiver` is `null` until set. Stored by sdrd in a local JSON file (default `~/.config/sweep/config.json`, flag `-config`).
+
+### `PUT /api/config`
+Body: `{"receiver": {"lat": 12.34, "lon": 56.78, "alt_m": 100}}` (`alt_m` optional) or `{"receiver": null}` to clear. Returns the config. lat must be -90..90, lon -180..180. When set, the ADS-B decoder passes it to dump1090 (`--lat/--lon`), which enables local position decoding; restart the decoder for a change to apply.

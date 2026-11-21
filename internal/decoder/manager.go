@@ -30,9 +30,10 @@ type Status struct {
 
 // Manager runs at most one decoder.
 type Manager struct {
-	r       *radio.Radio
-	ev      *Events
-	SBSPort int // dump1090 SBS output port (private, 127.0.0.1)
+	r        *radio.Radio
+	ev       *Events
+	SBSPort  int                                // dump1090 SBS output port (private, 127.0.0.1)
+	Receiver func() (lat, lon float64, ok bool) // receiver location for dump1090, if set
 
 	mu   sync.Mutex
 	cur  *run
