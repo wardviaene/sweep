@@ -745,14 +745,14 @@
     },
     {
       "id": "jpole",
-      "name": "Dual-band J-pole 2 m / 70 cm (e.g. Ed Fong DBJ roll-up)",
+      "name": "Dual-band J-pole 2 m / 70 cm (Ed Fong DBJ: resonant 144-148 and 440-450 MHz)",
       "good": [
         [
           140,
           165
         ],
         [
-          415,
+          425,
           460
         ]
       ],
@@ -767,7 +767,7 @@
         ],
         [
           400,
-          415
+          425
         ],
         [
           460,
