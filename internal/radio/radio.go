@@ -124,6 +124,8 @@ type Radio struct {
 	spec    *dsp.Spectrum
 	skip    int // bytes to discard after a retune
 	lastErr string
+	frames  chan []float64 // completed spectra, paced out by emit
+	pool    sync.Pool
 }
 
 // New creates a radio; call Run to start it.
@@ -131,7 +133,8 @@ func New(cfg Config, sink Sink) *Radio {
 	return &Radio{
 		cfg:  cfg,
 		sink: sink,
-		spec: dsp.NewSpectrum(cfg.FFTSize),
+		spec:   dsp.NewSpectrum(cfg.FFTSize),
+		frames: make(chan []float64, 4),
 		st: Status{
 			CenterHz:   cfg.CenterHz,
 			SampleRate: cfg.SampleRate,
@@ -210,6 +213,9 @@ func (r *Radio) Tune(req TuneRequest) (Status, error) {
 		r.st.GainDB = req.GainDB
 	}
 	r.spec.Reset()
+	for len(r.frames) > 0 {
+		r.pool.Put(<-r.frames)
+	}
 	r.skip = int(r.st.SampleRate) / 10 // drop ~50 ms of samples (2 bytes each) from before the retune
 	meta := r.metaLocked()
 	st := r.st
@@ -278,11 +284,20 @@ func (r *Radio) runOnce(ctx context.Context) error {
 		device, tuner = p.Device(), c.Header.TunerName()
 	}
 	defer src.Close()
-	if err := src.SetGain(gain); err != nil {
-		return err
-	}
 
 	r.mu.Lock()
+	// A Tune may have landed while the source was starting: apply the current state.
+	if r.st.CenterHz != center {
+		_ = src.SetFreq(r.st.CenterHz)
+	}
+	if r.st.SampleRate != sr {
+		_ = src.SetSampleRate(r.st.SampleRate)
+	}
+	_ = gain
+	if err := src.SetGain(r.st.GainDB); err != nil {
+		r.mu.Unlock()
+		return err
+	}
 	r.src = src
 	r.st.Device, r.st.Tuner, r.st.Gains = device, tuner, gainTables[tuner]
 	r.st.Connected = true
@@ -327,7 +342,17 @@ func (r *Radio) runOnce(ctx context.Context) error {
 				r.skip -= d
 				b = b[d:]
 			}
-			r.spec.Write(b)
+			// rtl_tcp delivers IQ in ~64 ms bursts, so frames are cut by sample
+			// count (one frame's worth of FFTs) and emit paces them evenly.
+			block := 2 * r.cfg.FFTSize
+			for len(b) > 0 {
+				c := min(block, len(b))
+				r.spec.Write(b[:c])
+				b = b[c:]
+				if r.spec.Count() >= r.fftsPerFrameLocked() {
+					r.pushFrameLocked()
+				}
+			}
 			r.mu.Unlock()
 		}
 		if err != nil {
@@ -336,25 +361,42 @@ func (r *Radio) runOnce(ctx context.Context) error {
 	}
 }
 
-// emit produces one quantized frame per tick.
+func (r *Radio) pushFrameLocked() {
+	db, _ := r.pool.Get().([]float64)
+	if db == nil {
+		db = make([]float64, r.cfg.FFTSize)
+	}
+	r.spec.Take(db)
+	select {
+	case r.frames <- db:
+	default: // consumer behind: drop
+		r.pool.Put(db)
+	}
+}
+
+func (r *Radio) fftsPerFrameLocked() int {
+	return max(1, int(r.st.SampleRate)/(r.cfg.FFTSize*r.cfg.FPS))
+}
+
+// emit sends at most one quantized frame per tick.
 func (r *Radio) emit(ctx context.Context) {
 	t := time.NewTicker(time.Second / time.Duration(r.cfg.FPS))
 	defer t.Stop()
-	db := make([]float64, r.cfg.FFTSize)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 		}
-		r.mu.Lock()
-		ok := r.spec.Take(db)
-		r.mu.Unlock()
-		if !ok {
+		var db []float64
+		select {
+		case db = <-r.frames:
+		default:
 			continue
 		}
 		out := make([]byte, len(db))
 		dsp.Quantize(out, db, r.cfg.MinDB, r.cfg.MaxDB)
+		r.pool.Put(db)
 		r.sink.Frame(out)
 	}
 }

@@ -28,7 +28,7 @@ func main() {
 	flag.IntVar(&cfg.RtlTcpPort, "rtl-tcp-port", 1235, "port for the private rtl_tcp instance")
 	flag.IntVar(&cfg.FFTSize, "fft", 2048, "FFT size (bins per frame)")
 	flag.IntVar(&cfg.FPS, "fps", 20, "spectrum frames per second")
-	flag.Float64Var(&cfg.MinDB, "min-db", -110, "dB mapped to 0 in frames")
+	flag.Float64Var(&cfg.MinDB, "min-db", -90, "dB mapped to 0 in frames")
 	flag.Float64Var(&cfg.MaxDB, "max-db", -20, "dB mapped to 255 in frames")
 	flag.Parse()
 	cfg.CenterHz, cfg.SampleRate = uint32(*freq), uint32(*rate)
