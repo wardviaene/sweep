@@ -4,13 +4,17 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/wardviaene/sweep/data"
+	"github.com/wardviaene/sweep/internal/decoder"
 	"github.com/wardviaene/sweep/internal/radio"
 )
 
@@ -98,8 +102,67 @@ func (h *Hub) remove(c *client) {
 }
 
 // Handler returns the HTTP handler. static may be nil.
-func Handler(r *radio.Radio, hub *Hub, static fs.FS) http.Handler {
+// Deps are the components the HTTP API exposes.
+type Deps struct {
+	Radio     *radio.Radio
+	Hub       *Hub
+	Audio     *AudioHub
+	Decoders  *decoder.Manager
+	Events    *decoder.Events
+	Static    fs.FS  // built web UI, may be nil
+	RecordDir string // where POST /api/record writes cu8 files
+}
+
+// Handler returns the HTTP handler.
+func Handler(d Deps) http.Handler {
+	r, hub, audio := d.Radio, d.Hub, d.Audio
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/decoder", func(w http.ResponseWriter, req *http.Request) {
+		var body struct {
+			Decoder string `json:"decoder"`
+			Region  string `json:"region"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := d.Decoders.Start(body.Decoder, body.Region); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, r.Status())
+	})
+	mux.HandleFunc("POST /api/scan", scanHandler(d))
+	mux.HandleFunc("POST /api/record", recordHandler(d, d.RecordDir))
+	mux.HandleFunc("GET /api/events", func(w http.ResponseWriter, req *http.Request) {
+		since, _ := strconv.ParseInt(req.URL.Query().Get("since"), 10, 64)
+		limit, err := qint(req, "limit", 200, 1, 1000)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, d.Events.Since(since, limit))
+	})
+	mux.HandleFunc("GET /ws/events", func(w http.ResponseWriter, req *http.Request) {
+		conn, err := accept(w, req)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		ctx := conn.CloseRead(req.Context())
+		ch, cancel := d.Events.Subscribe(100)
+		defer cancel()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case b := <-ch:
+				if err := write(ctx, conn, wsMsg{websocket.MessageText, b}); err != nil {
+					return
+				}
+			}
+		}
+	})
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, r.Status())
 	})
@@ -115,6 +178,29 @@ func Handler(r *radio.Radio, hub *Hub, static fs.FS) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, st)
+	})
+	mux.HandleFunc("POST /api/demod", func(w http.ResponseWriter, req *http.Request) {
+		body, err := io.ReadAll(http.MaxBytesReader(w, req.Body, 4096))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		d, err := decodeDemod(body)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		st, err := r.SetDemod(d)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, st)
+	})
+	mux.HandleFunc("GET /ws/audio", audio.serve)
+	mux.HandleFunc("GET /api/bands", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data.Bands)
 	})
 	mux.HandleFunc("GET /api/spectrum", func(w http.ResponseWriter, req *http.Request) {
 		snap, err := hub.snapshot(req)
@@ -135,17 +221,14 @@ func Handler(r *radio.Radio, hub *Hub, static fs.FS) http.Handler {
 	mux.HandleFunc("GET /ws/spectrum", func(w http.ResponseWriter, req *http.Request) {
 		serveSpectrum(w, req, hub)
 	})
-	if static != nil {
-		mux.Handle("/", http.FileServerFS(static))
+	if d.Static != nil {
+		mux.Handle("/", http.FileServerFS(d.Static))
 	}
 	return mux
 }
 
 func serveSpectrum(w http.ResponseWriter, req *http.Request, hub *Hub) {
-	// The Vite dev proxy keeps the browser's Origin (localhost:5173), so allow local origins.
-	conn, err := websocket.Accept(w, req, &websocket.AcceptOptions{
-		OriginPatterns: []string{"localhost:*", "127.0.0.1:*", "[::1]:*"},
-	})
+	conn, err := accept(w, req)
 	if err != nil {
 		return
 	}
@@ -170,6 +253,14 @@ func serveSpectrum(w http.ResponseWriter, req *http.Request, hub *Hub) {
 			}
 		}
 	}
+}
+
+// accept upgrades to a WebSocket. The Vite dev proxy keeps the browser's
+// Origin (localhost:5173), so local origins are allowed.
+func accept(w http.ResponseWriter, req *http.Request) (*websocket.Conn, error) {
+	return websocket.Accept(w, req, &websocket.AcceptOptions{
+		OriginPatterns: []string{"localhost:*", "127.0.0.1:*", "[::1]:*"},
+	})
 }
 
 func write(ctx context.Context, conn *websocket.Conn, m wsMsg) error {

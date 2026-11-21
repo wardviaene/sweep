@@ -23,6 +23,7 @@ type Synth struct {
 	sampleRate float64
 	tones      []Tone
 	phase      []float64
+	fms        []*fmSource
 	noise      float64
 	rng        *rand.Rand
 
@@ -36,7 +37,7 @@ func NewSynth(centerHz, sampleRate uint32) *Synth {
 	s := &Synth{
 		centerHz:   float64(centerHz),
 		sampleRate: float64(sampleRate),
-		noise:      0.02,
+		noise:      0.004,
 		rng:        rand.New(rand.NewPCG(1, 2)),
 		tones: []Tone{
 			{FreqHz: 433.92e6, Amp: 0.3},
@@ -78,6 +79,16 @@ func (s *Synth) Read(p []byte) (int, error) {
 			re += t.Amp * math.Cos(s.phase[k])
 			im += t.Amp * math.Sin(s.phase[k])
 		}
+		for _, f := range s.fms {
+			off := f.freqHz - s.centerHz
+			if math.Abs(off) >= s.sampleRate/2 {
+				continue
+			}
+			a := f.next(s.sampleRate)
+			f.phase += 2 * math.Pi * (off + f.devHz*a) / s.sampleRate
+			re += f.amp * math.Cos(f.phase)
+			im += f.amp * math.Sin(f.phase)
+		}
 		re += s.rng.NormFloat64() * s.noise
 		im += s.rng.NormFloat64() * s.noise
 		p[i] = toU8(re)
@@ -85,6 +96,9 @@ func (s *Synth) Read(p []byte) (int, error) {
 	}
 	for k := range s.phase {
 		s.phase[k] = math.Mod(s.phase[k], 2*math.Pi)
+	}
+	for _, f := range s.fms {
+		f.phase = math.Mod(f.phase, 2*math.Pi)
 	}
 	s.emitted += int64(n / 2)
 	return n, nil
@@ -122,9 +136,9 @@ func (s *Synth) SetSampleRate(sps uint32) error {
 // SetGain scales the noise floor a little so gain changes are visible.
 func (s *Synth) SetGain(db *float64) error {
 	s.mu.Lock()
-	s.noise = 0.02
+	s.noise = 0.004
 	if db != nil {
-		s.noise = 0.005 * math.Pow(10, *db/40)
+		s.noise = 0.001 * math.Pow(10, *db/40)
 	}
 	s.mu.Unlock()
 	return nil
@@ -135,3 +149,34 @@ func (s *Synth) Close() error { return nil }
 
 // Wait blocks until ctx is done (the synth never fails).
 func (s *Synth) Wait(ctx context.Context) { <-ctx.Done() }
+
+// fmSource is looping audio frequency-modulated onto a carrier.
+type fmSource struct {
+	freqHz, devHz, amp float64
+	audio              []float64
+	rate               float64
+	pos                float64
+	phase              float64
+}
+
+func (f *fmSource) next(sampleRate float64) float64 {
+	i := int(f.pos)
+	a := f.audio[i%len(f.audio)]
+	f.pos += f.rate / sampleRate
+	if f.pos >= float64(len(f.audio)) {
+		f.pos -= float64(len(f.audio))
+	}
+	return a
+}
+
+// AddFM loops 16-bit mono PCM (at rate Hz, followed by `gap` seconds of
+// silence) as an FM signal at freqHz with the given peak deviation.
+func (s *Synth) AddFM(freqHz float64, pcm []int16, rate, devHz, gap float64) {
+	a := make([]float64, len(pcm)+int(gap*rate))
+	for i, v := range pcm {
+		a[i] = float64(v) / 32768
+	}
+	s.mu.Lock()
+	s.fms = append(s.fms, &fmSource{freqHz: freqHz, devHz: devHz, amp: 0.3, audio: a, rate: rate})
+	s.mu.Unlock()
+}

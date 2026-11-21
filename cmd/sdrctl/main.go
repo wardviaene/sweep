@@ -6,6 +6,14 @@
 //	sdrctl rate 2.4M
 //	sdrctl peaks [-n 10] [-min-snr 10] [-frames 20] [-agg max|avg]
 //	sdrctl spectrum [-bins 128] [-frames 20] [-agg avg|max]
+//	sdrctl listen 446.00625M [-mode nfm] [-bw 12.5k] [-squelch -60|off]
+//	sdrctl demod off|nfm|am|usb|lsb
+//	sdrctl decoder rtl_433|adsb|aprs|ais|none [-region us|eu]
+//	sdrctl events [-since 0] [-limit 50] [-decoder rtl_433]
+//	sdrctl bands [-region us|eu]
+//	sdrctl band <id> [-region us|eu]
+//	sdrctl scan 430M 440M [-dwell 500] [-min-snr 10]
+//	sdrctl record <seconds>
 package main
 
 import (
@@ -76,6 +84,256 @@ func init() {
 		}
 		return get("/api/spectrum", url.Values{"bins": {strconv.Itoa(*bins)}, "frames": {strconv.Itoa(*frames)}, "agg": {*agg}})
 	}}
+}
+
+func init() {
+	commands["listen"] = command{"listen <freq> [-mode nfm|am|usb|lsb] [-bw 12.5k] [-squelch dB|off]", cmdListen}
+	commands["demod"] = command{"demod <off|nfm|am|usb|lsb>", func(a []string) error {
+		if len(a) != 1 {
+			return usageErr("demod")
+		}
+		return post("/api/demod", map[string]any{"mode": a[0]})
+	}}
+	commands["decoder"] = command{"decoder <rtl_433|adsb|aprs|ais|none> [-region us|eu]", func(a []string) error {
+		if len(a) < 1 || strings.HasPrefix(a[0], "-") {
+			return usageErr("decoder")
+		}
+		fs := flag.NewFlagSet("decoder", flag.ContinueOnError)
+		region := fs.String("region", "us", "us or eu (APRS frequency)")
+		if err := fs.Parse(a[1:]); err != nil {
+			return err
+		}
+		return post("/api/decoder", map[string]any{"decoder": a[0], "region": *region})
+	}}
+	commands["events"] = command{"events [-since 0] [-limit 50] [-decoder name]", cmdEvents}
+	commands["bands"] = command{"bands [-region us|eu]", cmdBands}
+	commands["band"] = command{"band <id> [-region us|eu]   (tune to a band; listen if it has a voice mode)", cmdBand}
+	commands["scan"] = command{"scan <start> <stop> [-dwell 500] [-min-snr 10] [-max 50]", func(a []string) error {
+		if len(a) < 2 {
+			return usageErr("scan")
+		}
+		lo, err := ParseFreq(a[0])
+		if err != nil {
+			return err
+		}
+		hi, err := ParseFreq(a[1])
+		if err != nil {
+			return err
+		}
+		fs := flag.NewFlagSet("scan", flag.ContinueOnError)
+		dwell := fs.Int("dwell", 500, "ms per step")
+		snr := fs.Float64("min-snr", 10, "dB above floor")
+		mx := fs.Int("max", 50, "max peaks")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		client.Timeout = 10 * time.Minute
+		return post("/api/scan", map[string]any{"start_hz": lo, "stop_hz": hi, "dwell_ms": *dwell, "min_snr": *snr, "max": *mx})
+	}}
+	commands["record"] = command{"record <seconds>   (writes a cu8 file next to sdrd; play back with sdrd -iq FILE)", func(a []string) error {
+		if len(a) != 1 {
+			return usageErr("record")
+		}
+		secs, err := strconv.ParseFloat(a[0], 64)
+		if err != nil {
+			return err
+		}
+		client.Timeout = time.Duration(secs+30) * time.Second
+		return post("/api/record", map[string]any{"seconds": secs})
+	}}
+}
+
+func cmdListen(a []string) error {
+	if len(a) < 1 || strings.HasPrefix(a[0], "-") {
+		return usageErr("listen")
+	}
+	f, err := ParseFreq(a[0])
+	if err != nil {
+		return err
+	}
+	fs := flag.NewFlagSet("listen", flag.ContinueOnError)
+	mode := fs.String("mode", "nfm", "nfm, am, usb or lsb")
+	bw := fs.String("bw", "", "channel bandwidth, e.g. 12.5k (default per mode)")
+	sq := fs.String("squelch", "", "squelch in dB, or off")
+	if err := fs.Parse(a[1:]); err != nil {
+		return err
+	}
+	body := map[string]any{"mode": *mode, "freq_hz": f}
+	if *bw != "" {
+		b, err := ParseFreq(*bw)
+		if err != nil {
+			return err
+		}
+		body["bandwidth_hz"] = b
+	}
+	switch *sq {
+	case "":
+	case "off":
+		body["squelch_db"] = nil
+	default:
+		v, err := strconv.ParseFloat(*sq, 64)
+		if err != nil {
+			return fmt.Errorf("squelch %q: want dB or off", *sq)
+		}
+		body["squelch_db"] = v
+	}
+	return post("/api/demod", body)
+}
+
+func cmdEvents(a []string) error {
+	fs := flag.NewFlagSet("events", flag.ContinueOnError)
+	since := fs.Int64("since", 0, "only events with id > since")
+	limit := fs.Int("limit", 50, "max events")
+	dec := fs.String("decoder", "", "filter by decoder")
+	if err := fs.Parse(a); err != nil {
+		return err
+	}
+	b, err := getBody("/api/events", url.Values{"since": {strconv.FormatInt(*since, 10)}, "limit": {"1000"}})
+	if err != nil {
+		return err
+	}
+	var evs []map[string]any
+	if err := json.Unmarshal(b, &evs); err != nil {
+		return err
+	}
+	out := []map[string]any{}
+	for _, e := range evs {
+		if *dec == "" || e["decoder"] == *dec {
+			out = append(out, e)
+		}
+	}
+	if len(out) > *limit {
+		out = out[len(out)-*limit:]
+	}
+	return printJSON(out)
+}
+
+type band struct {
+	ID       string               `json:"id"`
+	Name     string               `json:"name"`
+	Regions  []string             `json:"regions"`
+	Lo       float64              `json:"lo_mhz"`
+	Hi       float64              `json:"hi_mhz"`
+	Edges    map[string][]float64 `json:"edges,omitempty"`
+	Tune     float64              `json:"tune_mhz"`
+	HF       bool                 `json:"hf"`
+	Mode     string               `json:"mode"`
+	Decoder  *string              `json:"decoder"`
+	OnAir    string               `json:"on_air"`
+	Antenna  string               `json:"antenna"`
+	Channels []struct {
+		MHz     float64  `json:"mhz"`
+		Name    string   `json:"name"`
+		Mode    string   `json:"mode"`
+		Regions []string `json:"regions,omitempty"`
+	} `json:"channels"`
+}
+
+func loadBands(region string) ([]band, error) {
+	b, err := getBody("/api/bands", nil)
+	if err != nil {
+		return nil, err
+	}
+	var cat struct {
+		Bands []band `json:"bands"`
+	}
+	if err := json.Unmarshal(b, &cat); err != nil {
+		return nil, err
+	}
+	var out []band
+	for _, bd := range cat.Bands {
+		if !slicesContains(bd.Regions, region) {
+			continue
+		}
+		if e, ok := bd.Edges[region]; ok {
+			bd.Lo, bd.Hi = e[0], e[1]
+		}
+		bd.Edges = nil
+		chs := bd.Channels[:0]
+		for _, c := range bd.Channels {
+			if len(c.Regions) == 0 || slicesContains(c.Regions, region) {
+				c.Regions = nil
+				chs = append(chs, c)
+			}
+		}
+		bd.Channels = chs
+		out = append(out, bd)
+	}
+	return out, nil
+}
+
+func slicesContains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+func cmdBands(a []string) error {
+	fs := flag.NewFlagSet("bands", flag.ContinueOnError)
+	region := fs.String("region", "us", "us or eu")
+	if err := fs.Parse(a); err != nil {
+		return err
+	}
+	bs, err := loadBands(*region)
+	if err != nil {
+		return err
+	}
+	return printJSON(bs)
+}
+
+func cmdBand(a []string) error {
+	if len(a) < 1 || strings.HasPrefix(a[0], "-") {
+		return usageErr("band")
+	}
+	fs := flag.NewFlagSet("band", flag.ContinueOnError)
+	region := fs.String("region", "us", "us or eu")
+	if err := fs.Parse(a[1:]); err != nil {
+		return err
+	}
+	bs, err := loadBands(*region)
+	if err != nil {
+		return err
+	}
+	for _, b := range bs {
+		if b.ID != a[0] {
+			continue
+		}
+		f := uint64(b.Tune*1e6 + 0.5)
+		if b.Mode != "none" {
+			return post("/api/demod", map[string]any{"mode": b.Mode, "freq_hz": f})
+		}
+		return post("/api/tune", map[string]any{"freq_hz": f})
+	}
+	return fmt.Errorf("no band %q in region %s (see sdrctl bands)", a[0], *region)
+}
+
+func getBody(path string, q url.Values) ([]byte, error) {
+	u := "http://" + addr + path
+	if q != nil {
+		u += "?" + q.Encode()
+	}
+	resp, err := client.Get(u)
+	if err != nil {
+		return nil, fmt.Errorf("sdrd not reachable at %s: %w", addr, err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, b)
+	}
+	return b, err
+}
+
+func printJSON(v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(b))
+	return nil
 }
 
 func cmdTune(a []string) error {

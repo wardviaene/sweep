@@ -70,6 +70,10 @@ func (h *Hub) aggregate(req *http.Request) (db []float64, start, bin float64, fr
 		err = errors.New("agg must be avg or max")
 		return
 	}
+	return h.aggregateN(frames, agg)
+}
+
+func (h *Hub) aggregateN(frames int, agg string) (db []float64, start, bin float64, _ int, _ string, center, rate uint32, err error) {
 	h.mu.Lock()
 	m := h.m
 	hist := h.hist

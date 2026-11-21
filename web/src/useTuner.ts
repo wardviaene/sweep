@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { tune, type Status, type TuneParams } from "./api";
 
-export const MIN_HZ = 24e6;
+// Below 24 MHz the backend uses RTL-SDR direct sampling (HF bands in the catalog).
+export const MIN_HZ = 0.1e6;
 export const MAX_HZ = 1766e6;
 const MIN_INTERVAL_MS = 100; // max ~10 freq tunes/s
 const ERROR_MS = 4000;
@@ -15,6 +16,8 @@ export interface Tuner {
   shiftFreq: (deltaHz: number) => void;
   /** Immediate tune of other parameters. */
   setParams: (p: TuneParams) => void;
+  /** Tune now (bypasses the rate limiter); resolves true on success. */
+  tuneNow: (hz: number) => Promise<boolean>;
   error: string | null;
 }
 
@@ -31,20 +34,34 @@ export function useTuner(status: Status | null, applyStatus: (s: Status) => void
   applyRef.current = applyStatus;
   centerRef.current = status?.center_hz ?? null;
 
-  const send = useCallback((p: TuneParams) => {
+  const sendP = useCallback((p: TuneParams): Promise<boolean> => {
     const id = ++seq.current;
-    tune(p)
+    return tune(p)
       .then((s) => {
-        if (id < applied.current) return; // stale response
-        applied.current = id;
-        applyRef.current(s);
+        if (id >= applied.current) {
+          applied.current = id;
+          applyRef.current(s);
+        }
+        return true;
       })
       .catch((e: unknown) => {
         setError(e instanceof Error ? e.message : String(e));
         window.clearTimeout(errTimer.current);
         errTimer.current = window.setTimeout(() => setError(null), ERROR_MS);
+        return false;
       });
   }, []);
+  const send = useCallback((p: TuneParams) => void sendP(p), [sendP]);
+  const tuneNow = useCallback(
+    (hz: number) => {
+      window.clearTimeout(timer.current);
+      timer.current = undefined;
+      pending.current = null;
+      lastSend.current = performance.now();
+      return sendP({ freq_hz: clampHz(Math.round(hz)) });
+    },
+    [sendP],
+  );
 
   const flush = useCallback(() => {
     timer.current = undefined;
@@ -86,5 +103,5 @@ export function useTuner(status: Status | null, applyStatus: (s: Status) => void
     [],
   );
 
-  return { setFreq, shiftFreq, setParams: send, error };
+  return { setFreq, shiftFreq, setParams: send, tuneNow, error };
 }

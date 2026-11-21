@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -36,16 +37,26 @@ func init() { gainTables["R828D"] = gainTables["R820T"] }
 
 // Config holds startup settings.
 type Config struct {
-	Synth      bool   // use the synthetic source instead of rtl_tcp
-	RtlTcpBin  string // path to rtl_tcp
+	Synth      bool      // use the synthetic source instead of rtl_tcp
+	SynthFM    []SynthFM // extra FM signals for the synthetic source
+	File       string    // play back a cu8 recording instead of the dongle
+	RtlTcpBin  string    // path to rtl_tcp
 	RtlTcpPort int
 	CenterHz   uint32
 	SampleRate uint32
 	GainDB     *float64 // nil = auto
 	FFTSize    int
 	FPS        int
+	DirectQ    uint32 // direct-sampling branch for HF: 1 = I, 2 = Q
 	MinDB      float64
 	MaxDB      float64
+}
+
+// SynthFM is a WAV file FM-modulated onto a frequency by the synthetic source.
+type SynthFM struct {
+	FreqHz float64
+	PCM    []int16
+	Rate   float64
 }
 
 // Meta describes the spectrum frames.
@@ -70,6 +81,9 @@ type Status struct {
 	FFTSize    int       `json:"fft_size"`
 	FPS        int       `json:"fps"`
 	Mode       string    `json:"mode"`
+	Direct     bool      `json:"direct_sampling"` // HF via direct sampling (below 24 MHz)
+	Demod      DemodInfo `json:"demod"`
+	Decoder    any       `json:"decoder"`
 	Connected  bool      `json:"connected"`
 	Error      string    `json:"error,omitempty"`
 }
@@ -116,8 +130,9 @@ type Sink interface {
 
 // Radio is the single owner of the IQ source.
 type Radio struct {
-	cfg  Config
-	sink Sink
+	cfg   Config
+	sink  Sink
+	audio AudioSink
 
 	mu      sync.Mutex
 	src     Source
@@ -127,17 +142,32 @@ type Radio struct {
 	lastErr string
 	frames  chan []float64 // completed spectra, paced out by emit
 	pool    sync.Pool
+
+	demod     *dsp.Demod // listening VFO, nil when off
+	dm        DemodInfo
+	audioBuf  []int16
+	lastLevel time.Time
+	taps      map[int]*tap // IQ / audio consumers (decoders)
+	nextTap   int
+	decoderFn func() any // status of the decoder manager, set by SetDecoderStatus
 }
 
 // New creates a radio; call Run to start it.
-func New(cfg Config, sink Sink) *Radio {
+func New(cfg Config, sink Sink, audio AudioSink) *Radio {
+	if cfg.DirectQ == 0 {
+		cfg.DirectQ = 2
+	}
 	return &Radio{
 		cfg:    cfg,
 		sink:   sink,
+		audio:  audio,
+		dm:     DemodInfo{Mode: "off"},
+		taps:   map[int]*tap{},
 		spec:   dsp.NewSpectrum(cfg.FFTSize),
 		frames: make(chan []float64, 4),
 		st: Status{
 			CenterHz:   cfg.CenterHz,
+			Direct:     cfg.CenterHz < hfLimit,
 			SampleRate: cfg.SampleRate,
 			GainDB:     cfg.GainDB,
 			FFTSize:    cfg.FFTSize,
@@ -162,19 +192,28 @@ func (r *Radio) metaLocked() Meta {
 // Status returns a snapshot of the radio state.
 func (r *Radio) Status() Status {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	s := r.st
 	s.Error = r.lastErr
+	s.Demod = r.dm
+	fn := r.decoderFn
+	r.mu.Unlock()
+	if fn != nil {
+		s.Decoder = fn()
+	}
 	return s
 }
 
 // Tune applies a tuning request.
 func (r *Radio) Tune(req TuneRequest) (Status, error) {
 	r.mu.Lock()
+	if r.cfg.File != "" && (req.FreqHz != nil || req.SampleRate != nil) {
+		r.mu.Unlock()
+		return Status{}, fmt.Errorf("playing a recording: tuning is disabled")
+	}
 	if req.FreqHz != nil {
-		if f := *req.FreqHz; f < 24_000_000 || f > 1_766_000_000 {
+		if f := *req.FreqHz; f < 500_000 || f > 1_766_000_000 {
 			r.mu.Unlock()
-			return Status{}, fmt.Errorf("freq_hz %d out of tuner range (24 MHz-1.766 GHz; HF direct sampling is not wired yet)", f)
+			return Status{}, fmt.Errorf("freq_hz %d out of range (0.5-24 MHz via direct sampling, 24-1766 MHz via the tuner)", f)
 		}
 	}
 	if req.SampleRate != nil {
@@ -195,6 +234,15 @@ func (r *Radio) Tune(req TuneRequest) (Status, error) {
 			err = errors.Join(err, src.SetSampleRate(*req.SampleRate))
 		}
 		if req.FreqHz != nil {
+			if direct := *req.FreqHz < hfLimit; direct != r.st.Direct {
+				mode := uint32(0)
+				if direct {
+					mode = r.cfg.DirectQ
+				}
+				if ds, ok := src.(interface{ SetDirectSampling(uint32) error }); ok {
+					err = errors.Join(err, ds.SetDirectSampling(mode))
+				}
+			}
 			err = errors.Join(err, src.SetFreq(*req.FreqHz))
 		}
 		if req.SetGain {
@@ -207,10 +255,12 @@ func (r *Radio) Tune(req TuneRequest) (Status, error) {
 	}
 	if req.FreqHz != nil {
 		r.st.CenterHz = *req.FreqHz
+		r.st.Direct = *req.FreqHz < hfLimit
 	}
 	if req.SampleRate != nil {
 		r.st.SampleRate = *req.SampleRate
 	}
+	r.retuneDemodLocked(req.SampleRate != nil)
 	if req.SetGain {
 		r.st.GainDB = req.GainDB
 	}
@@ -220,10 +270,9 @@ func (r *Radio) Tune(req TuneRequest) (Status, error) {
 	}
 	r.skip = int(r.st.SampleRate) / 10 // drop ~50 ms of samples (2 bytes each) from before the retune
 	meta := r.metaLocked()
-	st := r.st
 	r.mu.Unlock()
 	r.sink.Meta(meta)
-	return st, nil
+	return r.Status(), nil
 }
 
 func snapGain(table []float64, g float64) float64 {
@@ -272,8 +321,19 @@ func (r *Radio) runOnce(ctx context.Context) error {
 	var src Source
 	var device, tuner string
 	var proc *rtltcp.Process
-	if r.cfg.Synth {
-		src = source.NewSynth(center, sr)
+	if r.cfg.File != "" {
+		f, err := source.OpenFile(r.cfg.File, sr)
+		if err != nil {
+			return err
+		}
+		src = f
+		device, tuner = "recording: "+filepath.Base(r.cfg.File), "R820T"
+	} else if r.cfg.Synth {
+		syn := source.NewSynth(center, sr)
+		for _, f := range r.cfg.SynthFM {
+			syn.AddFM(f.FreqHz, f.PCM, f.Rate, 3000, 2)
+		}
+		src = syn
 		device, tuner = "synthetic", "R820T"
 	} else {
 		p, c, err := rtltcp.Start(ctx, r.cfg.RtlTcpBin, r.cfg.RtlTcpPort, center, sr)
@@ -289,7 +349,12 @@ func (r *Radio) runOnce(ctx context.Context) error {
 
 	r.mu.Lock()
 	// A Tune may have landed while the source was starting: apply the current state.
-	if r.st.CenterHz != center {
+	if r.st.Direct {
+		if ds, ok := src.(interface{ SetDirectSampling(uint32) error }); ok {
+			_ = ds.SetDirectSampling(r.cfg.DirectQ)
+		}
+		_ = src.SetFreq(r.st.CenterHz)
+	} else if r.st.CenterHz != center {
 		_ = src.SetFreq(r.st.CenterHz)
 	}
 	if r.st.SampleRate != sr {
@@ -343,6 +408,7 @@ func (r *Radio) runOnce(ctx context.Context) error {
 				r.skip -= d
 				b = b[d:]
 			}
+			r.processLocked(b)
 			// rtl_tcp delivers IQ in ~64 ms bursts, so frames are cut by sample
 			// count (one frame's worth of FFTs) and emit paces them evenly.
 			block := 2 * r.cfg.FFTSize

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Status } from "./api";
 import type { Tuner } from "./useTuner";
 import { clampHz, MAX_HZ, MIN_HZ } from "./useTuner";
@@ -37,8 +37,9 @@ export function Controls(props: {
   tuner: Tuner;
   step: number;
   setStep: (hz: number) => void;
+  children?: ReactNode;
 }) {
-  const { status, centerHz, tuner, step, setStep } = props;
+  const { status, centerHz, tuner, step, setStep, children } = props;
   const [text, setText] = useState("");
   const [focused, setFocused] = useState(false);
   const [bad, setBad] = useState<string | null>(null);
@@ -124,6 +125,7 @@ export function Controls(props: {
           ))}
         </select>
       </span>
+      {children}
       {tuner.error && <span className="err">{tuner.error}</span>}
     </div>
   );
