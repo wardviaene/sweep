@@ -158,3 +158,45 @@ Body: `{"seconds": 5}` (0.1-60). Blocks while recording raw cu8 IQ at the curren
 
 ### `PUT /api/config`
 Body: any of `{"receiver": {"lat": 12.34, "lon": 56.78, "alt_m": 100}}` (`alt_m` optional; `null` clears) and `{"meter_ids": ["12345678"]}`. Only the fields present change. Returns the config. lat must be -90..90, lon -180..180. When set, the ADS-B decoder passes it to dump1090 (`--lat/--lon`), which enables local position decoding; restart the decoder for a change to apply.
+
+## Antennas
+
+`GET /api/bands` also returns `antennas[]`: `{"id": "jpole", "name": "...", "good": [[140, 165], [415, 460]], "fair": [[118, 140], ...]}` (MHz ranges). A frequency is a **good** fit if it lies in a `good` range, **fair** if in a `fair` range, otherwise **poor**. The selected antenna is stored in the config:
+
+`GET/PUT /api/config` has `"antenna": "jpole"` (an antenna id; absent/null = unknown). PUT merges as for the other fields.
+
+## Survey ("what's on the air?")
+
+A survey runs a list of short steps with the current antenna and reports what each one found. It owns the radio while it runs (fails with 409 if a scan/recording is running; a running decoder is stopped). Afterwards it restores the previous center frequency, sample rate, gain, VFO and decoder.
+
+### `POST /api/survey`
+Body (all optional):
+```json
+{"antenna": "jpole", "region": "us", "seconds": 20, "include_fair": false, "steps": ["aprs", "scan:2m"]}
+```
+- `antenna`: defaults to the configured one; `region`: defaults to the catalog default.
+- `seconds`: per decoder step, 5-120, default 20.
+- `steps`: explicit step ids; when absent sdrd builds the plan: for every band in the region whose `tune_mhz` is a good fit (or fair, with `include_fair`) and isn't `hf` (unless the antenna is `hfwire`): one `scan:<band id>` step (scan the band edges, dwell 500 ms) and, if the band has a `decoder`, one `<decoder>` step (or `<decoder>@<band id>` when the same decoder appears for several bands, e.g. `rtl_433@ism433`, `rtl_433@ism915`). `dsd` steps use the strongest non-spur carrier found by the preceding scan of that band; `packet` steps are skipped (they need a satellite pass); `meters` runs only if `meter_ids` are configured, otherwise it still runs and reports only the count of other meters heard.
+Returns 202 with the survey state (below). Only one survey at a time (409 otherwise).
+
+### `GET /api/survey`
+```json
+{"id": 3, "state": "running", "antenna": "jpole", "region": "us", "started": 1795290000, "elapsed_s": 41.2, "estimated_s": 260,
+ "steps": [
+   {"id": "scan:2m", "kind": "scan", "band": "2m", "label": "2 m amateur: band scan", "freq_lo_hz": 144000000, "freq_hi_hz": 148000000,
+    "state": "done", "seconds": 4.1, "found": 6, "summary": "6 carriers, strongest 146.520 MHz (+31 dB)",
+    "peaks": [{"freq_hz": 146520000, "db": -41.0, "snr_db": 31.0}]},
+   {"id": "aprs", "kind": "decoder", "decoder": "aprs", "band": "2m", "label": "APRS (144.390 MHz)", "freq_hz": 144390000,
+    "state": "running", "seconds": 12.0, "found": 3, "summary": "3 stations", "samples": [{"...": "event data"}]},
+   {"id": "ais", "kind": "decoder", "decoder": "ais", "state": "pending"}
+ ]}
+```
+- survey `state`: `idle` (never run) | `running` | `done` | `stopped` | `error`.
+- step `state`: `pending` | `running` | `done` | `skipped` | `error` (`error` has `"error": "..."`, `skipped` has `"reason": "..."`).
+- `found` is the number of distinct things heard: aircraft (adsb/uat: unique hex), sensors (rtl_433: unique model+id+channel), stations (aprs/packet: unique `from`), vessels (ais: unique mmsi), sondes (unique id), calls (dsd: unique mode+tgt+src), weather reports (uat FIS-B text, counted separately in the summary), carriers (scan). `samples` holds up to 3 representative event `data` objects (latest per distinct thing). For meters, `samples` only ever contains own meters.
+- The last finished survey stays readable until the next one starts.
+
+### `POST /api/survey/stop`
+Stops after the current step; state becomes `stopped`. Returns the state.
+
+Events: each finished step is also published on `/ws/events` as `{"decoder": "survey", "kind": "log", "data": {"line": "<label>: <summary>"}}`.

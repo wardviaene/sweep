@@ -21,6 +21,7 @@ import (
 	"github.com/wardviaene/sweep/internal/radio"
 	"github.com/wardviaene/sweep/internal/server"
 	"github.com/wardviaene/sweep/internal/source"
+	"github.com/wardviaene/sweep/internal/survey"
 )
 
 func main() {
@@ -110,7 +111,8 @@ func main() {
 		return 0, 0, false
 	}
 	defer decoders.Stop()
-	deps := server.Deps{Radio: r, Hub: hub, Audio: audio, Decoders: decoders, Events: events, RecordDir: *recDir, Config: store}
+	deps := server.Deps{Radio: r, Hub: hub, Audio: audio, Decoders: decoders, Events: events, RecordDir: *recDir, Config: store,
+		Survey: survey.New(survey.Deps{Radio: r, Spectrum: hub, Decoders: decoders, Config: store})}
 	if *web != "" {
 		if st, err := os.Stat(*web); err == nil && st.IsDir() {
 			deps.Static = os.DirFS(*web)

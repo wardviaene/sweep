@@ -91,3 +91,15 @@ func (e *Events) Count() int64 {
 	defer e.mu.Unlock()
 	return e.next
 }
+
+// LastTS returns the timestamp of the latest event from decoder with ID > after, or 0.
+func (e *Events) LastTS(decoder string, after int64) float64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for i := len(e.ring) - 1; i >= 0 && e.ring[i].ID > after; i-- {
+		if e.ring[i].Decoder == decoder {
+			return e.ring[i].TS
+		}
+	}
+	return 0
+}

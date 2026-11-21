@@ -109,6 +109,12 @@ func (h *Hub) aggregateN(frames int, agg string) (db []float64, start, bin float
 	return db, start, bin, frames, agg, m.CenterHz, m.SampleRate, nil
 }
 
+// Aggregate implements scan.Spectrum.
+func (h *Hub) Aggregate(frames int, agg string) (db []float64, start, bin float64, err error) {
+	db, start, bin, _, _, _, _, err = h.aggregateN(frames, agg)
+	return
+}
+
 func (h *Hub) snapshot(req *http.Request) (*Snapshot, error) {
 	db, start, bin, frames, agg, center, rate, err := h.aggregate(req)
 	if err != nil {

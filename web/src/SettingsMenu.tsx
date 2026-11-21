@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { ConfigApi } from "./useConfig";
 import type { LatLon } from "./geo";
 import { Popover } from "./Popover";
+import type { Antenna } from "./bands";
 
 const parse = (s: string): number | null => (s.trim() === "" || !Number.isFinite(Number(s)) ? null : Number(s));
 
@@ -11,8 +12,9 @@ export function SettingsMenu(props: {
   setOpen: (o: boolean) => void;
   /** Center of the open map view, if any. */
   mapCenter: (() => LatLon) | null;
+  antennas: Antenna[];
 }) {
-  const { config, open, setOpen, mapCenter } = props;
+  const { config, open, setOpen, mapCenter, antennas } = props;
   const { receiver } = config;
   const [lat, setLat] = useState("");
   const [lon, setLon] = useState("");
@@ -56,8 +58,39 @@ export function SettingsMenu(props: {
     }
   };
 
+  const pickAntenna = async (id: string) => {
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      await config.saveAntenna(id === "" ? null : id);
+      setMsg("antenna saved");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Popover label="⚙" title="Settings" open={open} setOpen={setOpen} width={300}>
+      <div className="label">antenna</div>
+      <div className="form">
+        <select
+          style={{ maxWidth: "100%" }}
+          value={config.antenna ?? ""}
+          disabled={busy || !config.available || antennas.length === 0}
+          onChange={(e) => void pickAntenna(e.target.value)}
+        >
+          <option value="">(not set)</option>
+          {config.antenna && !antennas.some((a) => a.id === config.antenna) && <option value={config.antenna}>{config.antenna}</option>}
+          {antennas.map((a) => (
+            <option key={a.id} value={a.id}>{a.name}</option>
+          ))}
+        </select>
+      </div>
+      <div className="dim pad0">Used to show which bands you can receive and to plan the survey.</div>
+      <hr />
       <div className="label">receiver location</div>
       {!config.available && <div className="dim pad0">config API not available on this backend</div>}
       <div className="form">

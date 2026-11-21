@@ -18,6 +18,7 @@ import (
 	"github.com/wardviaene/sweep/internal/config"
 	"github.com/wardviaene/sweep/internal/decoder"
 	"github.com/wardviaene/sweep/internal/radio"
+	"github.com/wardviaene/sweep/internal/survey"
 )
 
 // Hub fans spectrum frames out to WebSocket clients. Slow clients drop frames.
@@ -112,6 +113,7 @@ type Deps struct {
 	Decoders  *decoder.Manager
 	Events    *decoder.Events
 	Config    *config.Store
+	Survey    *survey.Runner
 	Static    fs.FS  // built web UI, may be nil
 	RecordDir string // where POST /api/record writes cu8 files
 }
@@ -127,6 +129,10 @@ func Handler(d Deps) http.Handler {
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&body); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if d.Survey.Active() {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "a survey is running"})
 			return
 		}
 		if err := d.Decoders.Start(body.Decoder, body.Options); err != nil {
@@ -155,6 +161,13 @@ func Handler(d Deps) http.Handler {
 			c.MeterIDs = nil
 			err = errors.Join(err, json.Unmarshal(v, &c.MeterIDs))
 		}
+		if v, ok := patch["antenna"]; ok {
+			c.Antenna = nil
+			err = errors.Join(err, json.Unmarshal(v, &c.Antenna))
+			if err == nil && c.Antenna != nil {
+				err = survey.ValidAntenna(*c.Antenna)
+			}
+		}
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -166,6 +179,28 @@ func Handler(d Deps) http.Handler {
 		writeJSON(w, http.StatusOK, d.Config.Get())
 	})
 	mux.HandleFunc("POST /api/scan", scanHandler(d))
+	mux.HandleFunc("POST /api/survey", func(w http.ResponseWriter, req *http.Request) {
+		var sr survey.Request
+		if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096)).Decode(&sr); err != nil && !errors.Is(err, io.EOF) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		st, err := d.Survey.Start(sr)
+		switch {
+		case errors.Is(err, survey.ErrBusy):
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		case err != nil:
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		default:
+			writeJSON(w, http.StatusAccepted, st)
+		}
+	})
+	mux.HandleFunc("GET /api/survey", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, d.Survey.Snapshot())
+	})
+	mux.HandleFunc("POST /api/survey/stop", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, d.Survey.Stop())
+	})
 	mux.HandleFunc("POST /api/record", recordHandler(d, d.RecordDir))
 	mux.HandleFunc("GET /api/events", func(w http.ResponseWriter, req *http.Request) {
 		since, _ := strconv.ParseInt(req.URL.Query().Get("since"), 10, 64)

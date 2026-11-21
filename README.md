@@ -24,6 +24,17 @@ brew install cmake libsndfile ncurses mbelib pulseaudio codec2
 make decoders
 ```
 
+## What's on the air?
+
+Set your antenna (gear icon, or `sdrctl antenna jpole`). The band panel then marks which bands fit it. **◎ What's on the air?** runs a short survey with that antenna: a scan of every band that fits, then each matching decoder for a sample period (20 s by default). Results come back as cards, with the ones that heard something first. Each card shows what was found (aircraft, sensors, stations, calls, carriers), a few samples, and buttons to open that decoder or listen to a carrier. The survey takes over the radio and restores your tuning afterwards.
+
+```bash
+sdrctl survey -seconds 20            # plan from the configured antenna
+sdrctl survey scan:2m aprs           # or explicit steps
+```
+
+Antenna presets live in `data/bands.json`: the log-periodic 400 MHz-1 GHz, a dual-band 2 m/70 cm J-pole, wideband, HF long wire, and unknown.
+
 ## Decoded data
 
 The decoder panel (expand it with ⤢) has a view per decoder:

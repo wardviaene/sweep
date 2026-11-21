@@ -14,10 +14,11 @@ import { useEvents } from "./useEvents";
 import { useConfig } from "./useConfig";
 import { ToolsMenu } from "./ToolsMenu";
 import { SettingsMenu } from "./SettingsMenu";
+import { SurveyPanel } from "./SurveyPanel";
 import type { LatLon } from "./geo";
 import { fmtMHz } from "./draw";
-import { setDecoder, type DecoderName, type DecoderOpts } from "./api";
-import { bandViews, loadRegion, saveRegion, type Band, type Channel } from "./bands";
+import { setDecoder, type DecoderName, type DecoderOpts, type SurveyStep } from "./api";
+import { bandViews, loadRegion, saveRegion, type Band, type BandMode, type Channel } from "./bands";
 
 export function App() {
   const { stream, conn, meta, fps } = useSpectrum();
@@ -34,6 +35,9 @@ export function App() {
   const registerCenter = useCallback((g: (() => LatLon) | null) => setMapCenter(() => g), []);
   const [step, setStep] = useState(100e3);
   const [regionPref, setRegionPref] = useState<string | null>(loadRegion);
+  const [surveyOpen, setSurveyOpen] = useState(false);
+  const [surveyLine, setSurveyLine] = useState<string | null>(null);
+  const [decFocus, setDecFocus] = useState<{ decoder: DecoderName; seq: number } | null>(null);
   const [decErr, setDecErr] = useState<string | null>(null);
   const [actErr, setActErr] = useState<string | null>(null);
   const errTimer = useRef<number | undefined>(undefined);
@@ -84,6 +88,24 @@ export function App() {
       if (ok) demod.send({ mode: b.mode as "nfm", freq_hz: hz }, true);
     });
   };
+  const openSurveyDecoder = (s: SurveyStep) => {
+    if (!s.decoder) return;
+    const opts: DecoderOpts | undefined =
+      s.freq_hz !== undefined && (s.decoder === "dsd" || s.decoder === "packet" || s.decoder === "radiosonde")
+        ? { freq_hz: s.freq_hz }
+        : undefined;
+    startDecoder(s.decoder, opts);
+    setDecFocus((f) => ({ decoder: s.decoder!, seq: (f?.seq ?? 0) + 1 }));
+  };
+  const surveyListen = (hz: number, mode: BandMode) => {
+    if (mode === "none") return;
+    const r = status?.sample_rate ?? 2.048e6;
+    void tuner.tuneNow(hz - r / 4).then((ok) => {
+      if (ok) demod.send({ mode, freq_hz: hz }, true);
+    });
+  };
+  const antennas = catalog?.antennas ?? [];
+  const antenna = antennas.find((a) => a.id === config.antenna) ?? null;
   const pickChannel = (_b: Band, c: Channel) => {
     const hz = Math.round(c.mhz * 1e6);
     if (c.mode !== "none") demod.send({ mode: c.mode, freq_hz: hz }, true);
@@ -114,6 +136,12 @@ export function App() {
           label="demod"
           value={d && d.mode !== "off" ? `${d.mode.toUpperCase()} ${fmtMHz(d.freq_hz, 4)} MHz` : "off"}
         />
+        <span className="item">
+          <span className="label">ant</span>{" "}
+          <button className="linkbtn" onClick={() => setSettingsOpen(true)} title="Antenna (click to change in settings)">
+            {config.antenna ? (antenna ? antenna.name.replace(/\s*\(.*$/, "").replace(/,.*$/, "") : config.antenna) : "not set"}
+          </button>
+        </span>
         <Item
           label="device"
           value={error ? "status unavailable" : (status?.device ?? "-")}
@@ -121,9 +149,12 @@ export function App() {
         />
       </header>
       <Controls status={status} centerHz={status?.center_hz ?? center} tuner={tuner} step={step} setStep={setStep}>
+        <button className="primary" onClick={() => setSurveyOpen(true)} title="Run a short survey to see what you can receive with your antenna">
+          ◎ What's on the air?
+        </button>
         <DemodControls status={status} demod={demod} audio={audio} />
         <ToolsMenu status={status} bandViews={views} tuner={tuner} demod={demod} open={toolsOpen} setOpen={setToolsOpen} />
-        <SettingsMenu config={config} open={settingsOpen} setOpen={setSettingsOpen} mapCenter={mapCenter} />
+        <SettingsMenu config={config} open={settingsOpen} setOpen={setSettingsOpen} mapCenter={mapCenter} antennas={antennas} />
       </Controls>
       <div className="main">
         <BandPanel
@@ -136,6 +167,8 @@ export function App() {
           onChannel={pickChannel}
           onDecoder={startDecoder}
           error={actErr}
+          antenna={antenna}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
         <div className="center">
           <SpectrumView
@@ -158,9 +191,23 @@ export function App() {
             receiver={config.receiver}
             registerCenter={registerCenter}
             onOpenSettings={() => setSettingsOpen(true)}
+            surveyLine={surveyLine}
+            onOpenSurvey={() => setSurveyOpen(true)}
+            focus={decFocus}
           />
         </div>
       </div>
+      <SurveyPanel
+        open={surveyOpen}
+        onClose={() => setSurveyOpen(false)}
+        catalog={catalog}
+        antennaId={config.antenna}
+        region={region}
+        onSummary={setSurveyLine}
+        onOpenDecoder={openSurveyDecoder}
+        onListen={surveyListen}
+        onTune={tuner.setFreq}
+      />
     </div>
   );
 }

@@ -643,14 +643,29 @@
           "mhz": 906.875,
           "name": "Meshtastic (US default)",
           "mode": "none"
-        },
-        {
-          "mhz": 912.6,
-          "name": "Utility meters (ERT/R900): your own meter only",
-          "mode": "none",
-          "decoder": "meters"
         }
       ]
+    },
+    {
+      "id": "meters",
+      "name": "Utility meters (ERT / R900)",
+      "regions": [
+        "us"
+      ],
+      "lo_mhz": 910.0,
+      "hi_mhz": 920.0,
+      "tune_mhz": 914.0,
+      "hf": false,
+      "mode": "none",
+      "decoder": "meters",
+      "on_air": "Electric, gas and water meters broadcasting consumption (Itron ERT SCM/IDM, Neptune R900). sweep only shows the meter IDs you configure; other meters are counted, never shown.",
+      "decode_with": [
+        "rtl_433 (ERT SCM/SCM+/IDM, Neptune R900 protocols)"
+      ],
+      "antenna": "1/4 wave (about 8 cm); the log-periodic works",
+      "tx_license": "Receive only",
+      "starter": "sdrctl meters <your meter id>; sdrctl decoder meters",
+      "channels": []
     },
     {
       "id": "uat",
@@ -708,6 +723,94 @@
           "mode": "none",
           "decoder": "adsb"
         }
+      ]
+    }
+  ],
+  "antennas": [
+    {
+      "id": "logper",
+      "name": "Log-periodic 400 MHz-1 GHz",
+      "good": [
+        [
+          400,
+          1000
+        ]
+      ],
+      "fair": [
+        [
+          1000,
+          1100
+        ]
+      ]
+    },
+    {
+      "id": "jpole",
+      "name": "Dual-band J-pole 2 m / 70 cm (e.g. Ed Fong DBJ roll-up)",
+      "good": [
+        [
+          140,
+          165
+        ],
+        [
+          415,
+          460
+        ]
+      ],
+      "fair": [
+        [
+          118,
+          140
+        ],
+        [
+          165,
+          175
+        ],
+        [
+          400,
+          415
+        ],
+        [
+          460,
+          520
+        ]
+      ]
+    },
+    {
+      "id": "wideband",
+      "name": "Wideband (discone or similar), 25 MHz-1.3 GHz",
+      "good": [
+        [
+          25,
+          1300
+        ]
+      ],
+      "fair": []
+    },
+    {
+      "id": "hfwire",
+      "name": "HF long wire (direct sampling)",
+      "good": [
+        [
+          0.5,
+          30
+        ]
+      ],
+      "fair": [
+        [
+          30,
+          60
+        ]
+      ]
+    },
+    {
+      "id": "none",
+      "name": "Unknown / other",
+      "good": [],
+      "fair": [
+        [
+          24,
+          1766
+        ]
       ]
     }
   ]

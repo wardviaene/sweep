@@ -35,7 +35,9 @@ func parseDSDLine(line string) (map[string]any, bool) {
 	sync := dsdSync.FindStringSubmatch(line)
 	tgt := dsdTGT.FindStringSubmatch(line)
 	src := dsdSRC.FindStringSubmatch(line)
-	if sync == nil && tgt == nil && src == nil {
+	// A sync alone isn't a call: dsd-fme reports spurious syncs (e.g. "P25p2
+	// Missing Parameters") on plain carriers. Require call metadata.
+	if tgt == nil && src == nil {
 		return nil, false
 	}
 	out := map[string]any{"line": line}

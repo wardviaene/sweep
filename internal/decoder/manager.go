@@ -34,6 +34,8 @@ type Status struct {
 	Started int64  `json:"started,omitempty"`
 	Events  int64  `json:"events"`
 	Error   string `json:"error,omitempty"`
+	// LastEventTS is the unix time (seconds) of the latest event from this run, 0 if none.
+	LastEventTS float64 `json:"last_event_ts"`
 }
 
 // Manager runs at most one decoder.
@@ -56,6 +58,7 @@ type run struct {
 	cancel  context.CancelFunc
 	done    chan struct{}
 	events0 int64
+	opt     Options
 }
 
 // NewManager creates a manager and registers its status with the radio.
@@ -74,7 +77,26 @@ func (m *Manager) Status() Status {
 	}
 	st := m.cur.st
 	st.Events = m.ev.Count() - m.cur.events0
+	st.LastEventTS = m.ev.LastTS(st.Name, m.cur.events0)
 	return st
+}
+
+// Events returns the store the decoders publish to.
+func (m *Manager) Events() *Events { return m.ev }
+
+// Current returns the running decoder and the options it was started with
+// (defaults filled in), for restoring it later.
+func (m *Manager) Current() (name string, opt Options, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cur == nil {
+		return "", Options{}, false
+	}
+	opt = m.cur.opt
+	if opt.FreqHz == 0 {
+		opt.FreqHz = m.cur.st.FreqHz
+	}
+	return m.cur.st.Name, opt, true
 }
 
 // Stop stops the running decoder, if any.
@@ -146,7 +168,7 @@ func (m *Manager) Start(name string, opt Options) error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cur := &run{st: Status{Name: name, Running: true, Started: time.Now().Unix()}, cancel: cancel,
-		done: make(chan struct{}), events0: m.ev.Count()}
+		done: make(chan struct{}), events0: m.ev.Count(), opt: opt}
 	m.mu.Lock()
 	m.cur = cur
 	m.mu.Unlock()
@@ -159,6 +181,7 @@ func (m *Manager) Start(name string, opt Options) error {
 		final := cur.st
 		final.Running = false
 		final.Events = m.ev.Count() - cur.events0
+		final.LastEventTS = m.ev.LastTS(name, cur.events0)
 		if err != nil && ctx.Err() == nil {
 			final.Error = err.Error()
 			m.ev.Publish(name, "log", map[string]string{"line": "stopped: " + err.Error()})

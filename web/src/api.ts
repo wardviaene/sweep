@@ -169,17 +169,22 @@ export interface Receiver {
 export interface Config {
   receiver: Receiver | null;
   meter_ids: string[];
+  /** antenna id from the catalog; null = unknown */
+  antenna: string | null;
 }
 
 /** PUT merges: send only the fields being changed. */
 export interface ConfigPatch {
   receiver?: Receiver | null;
   meter_ids?: string[];
+  antenna?: string | null;
 }
 
-function toConfig(c: { receiver?: Receiver | null; meter_ids?: unknown }): Config {
+type RawConfig = { receiver?: Receiver | null; meter_ids?: unknown; antenna?: unknown };
+
+function toConfig(c: RawConfig): Config {
   const ids = Array.isArray(c.meter_ids) ? c.meter_ids.filter((x): x is string => typeof x === "string") : [];
-  return { receiver: c.receiver ?? null, meter_ids: ids };
+  return { receiver: c.receiver ?? null, meter_ids: ids, antenna: typeof c.antenna === "string" && c.antenna !== "" ? c.antenna : null };
 }
 
 /** Resolves null when the backend has no /api/config (404). */
@@ -187,7 +192,7 @@ export async function getConfig(signal?: AbortSignal): Promise<Config | null> {
   const res = await fetch("/api/config", { signal });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`/api/config: ${res.status} ${await res.text()}`);
-  return toConfig((await res.json()) as { receiver?: Receiver | null; meter_ids?: unknown });
+  return toConfig((await res.json()) as RawConfig);
 }
 
 export async function putConfig(patch: ConfigPatch): Promise<Config> {
@@ -207,5 +212,79 @@ export async function putConfig(patch: ConfigPatch): Promise<Config> {
     }
     throw new Error(msg || `status ${res.status}`);
   }
-  return toConfig(JSON.parse(text) as { receiver?: Receiver | null; meter_ids?: unknown });
+  return toConfig(JSON.parse(text) as RawConfig);
+}
+
+// --- survey ("what's on the air?") ---
+
+export interface SurveyPeak {
+  freq_hz: number;
+  db: number;
+  snr_db: number;
+}
+
+export type SurveyState = "idle" | "running" | "done" | "stopped" | "error";
+export type SurveyStepState = "pending" | "running" | "done" | "skipped" | "error";
+
+export interface SurveyStep {
+  id: string;
+  kind: "scan" | "decoder";
+  decoder?: DecoderName;
+  band?: string;
+  label?: string;
+  freq_hz?: number;
+  freq_lo_hz?: number;
+  freq_hi_hz?: number;
+  state: SurveyStepState;
+  seconds?: number;
+  found?: number;
+  summary?: string;
+  peaks?: SurveyPeak[];
+  samples?: Record<string, unknown>[];
+  error?: string;
+  reason?: string;
+}
+
+export interface Survey {
+  id: number;
+  state: SurveyState;
+  antenna?: string;
+  region?: string;
+  started?: number;
+  elapsed_s: number;
+  estimated_s: number;
+  steps: SurveyStep[];
+}
+
+export interface SurveyParams {
+  antenna?: string;
+  region?: string;
+  seconds?: number;
+  include_fair?: boolean;
+  steps?: string[];
+}
+
+function toSurvey(j: Partial<Survey>): Survey {
+  return {
+    id: j.id ?? 0,
+    state: j.state ?? "idle",
+    antenna: j.antenna,
+    region: j.region,
+    started: j.started,
+    elapsed_s: j.elapsed_s ?? 0,
+    estimated_s: j.estimated_s ?? 0,
+    steps: Array.isArray(j.steps) ? j.steps : [],
+  };
+}
+
+export async function getSurvey(signal?: AbortSignal): Promise<Survey> {
+  return toSurvey(await request<Partial<Survey>>("/api/survey", { signal }));
+}
+
+export async function startSurvey(p: SurveyParams): Promise<Survey> {
+  return toSurvey(await post<Partial<Survey>>("/api/survey", p));
+}
+
+export async function stopSurvey(): Promise<Survey> {
+  return toSurvey(await post<Partial<Survey>>("/api/survey/stop", {}));
 }

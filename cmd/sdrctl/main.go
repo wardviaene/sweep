@@ -14,6 +14,9 @@
 //	sdrctl band <id> [-region us|eu]
 //	sdrctl scan 430M 440M [-dwell 500] [-min-snr 10]
 //	sdrctl record <seconds>
+//	sdrctl antenna [id|clear]
+//	sdrctl survey [-seconds 20] [-include-fair] [-region us] [-antenna id] [step ...]
+//	sdrctl survey status|stop
 package main
 
 import (
@@ -25,6 +28,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"time"
@@ -186,6 +190,122 @@ func init() {
 		}
 		return usageErr("location")
 	}}
+}
+
+func init() {
+	commands["antenna"] = command{"antenna [id|clear]   (the antenna you use; survey and the band list rate bands against it)", func(a []string) error {
+		switch {
+		case len(a) == 0:
+			return get("/api/config", nil)
+		case len(a) == 1 && a[0] == "clear":
+			return put("/api/config", map[string]any{"antenna": nil})
+		case len(a) == 1:
+			return put("/api/config", map[string]any{"antenna": a[0]})
+		}
+		return usageErr("antenna")
+	}}
+	commands["survey"] = command{"survey [-seconds 20] [-include-fair] [-region us] [-antenna id] [step ...] | survey status | survey stop", cmdSurvey}
+}
+
+// surveyState is the part of GET /api/survey the progress lines need.
+type surveyState struct {
+	State string `json:"state"`
+	Steps []struct {
+		ID      string  `json:"id"`
+		State   string  `json:"state"`
+		Seconds float64 `json:"seconds"`
+		Summary string  `json:"summary"`
+		Error   string  `json:"error"`
+		Reason  string  `json:"reason"`
+	} `json:"steps"`
+}
+
+func cmdSurvey(a []string) error {
+	if len(a) == 1 && a[0] == "status" {
+		return get("/api/survey", nil)
+	}
+	if len(a) == 1 && a[0] == "stop" {
+		return surveyStop()
+	}
+	fs := flag.NewFlagSet("survey", flag.ContinueOnError)
+	seconds := fs.Int("seconds", 20, "listening time per decoder step (5-120)")
+	fair := fs.Bool("include-fair", false, "also survey bands the antenna only fairly covers")
+	region := fs.String("region", "", "us or eu (default: the catalog default)")
+	antenna := fs.String("antenna", "", "antenna id (default: the configured antenna)")
+	if err := fs.Parse(a); err != nil {
+		return err
+	}
+	body := map[string]any{"seconds": *seconds, "include_fair": *fair}
+	if *region != "" {
+		body["region"] = *region
+	}
+	if *antenna != "" {
+		body["antenna"] = *antenna
+	}
+	if fs.NArg() > 0 {
+		body["steps"] = fs.Args()
+	}
+	b, _ := json.Marshal(body)
+	resp, err := client.Post("http://"+addr+"/api/survey", "application/json", bytes.NewReader(b))
+	if err != nil {
+		return fmt.Errorf("sdrd not reachable at %s: %w", addr, err)
+	}
+	if resp.StatusCode != http.StatusAccepted {
+		return output(resp)
+	}
+	resp.Body.Close()
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt)
+	seen := map[string]string{}
+	for {
+		raw, err := getBody("/api/survey", nil)
+		if err != nil {
+			return err
+		}
+		var st surveyState
+		if err := json.Unmarshal(raw, &st); err != nil {
+			return err
+		}
+		for _, s := range st.Steps {
+			if seen[s.ID] == s.State || s.State == "pending" {
+				continue
+			}
+			seen[s.ID] = s.State
+			fmt.Fprintf(os.Stderr, "%-14s %-8s %s\n", s.ID, s.State, cmp(s.Summary, s.Error, s.Reason))
+		}
+		if st.State != "running" {
+			var buf bytes.Buffer
+			_ = json.Indent(&buf, raw, "", "  ")
+			fmt.Println(strings.TrimSpace(buf.String()))
+			return nil
+		}
+		select {
+		case <-sig:
+			fmt.Fprintln(os.Stderr, "stopping survey...")
+			return surveyStop()
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func surveyStop() error {
+	c := &http.Client{Timeout: 30 * time.Second}
+	resp, err := c.Post("http://"+addr+"/api/survey/stop", "application/json", nil)
+	if err != nil {
+		return fmt.Errorf("sdrd not reachable at %s: %w", addr, err)
+	}
+	return output(resp)
+}
+
+// cmp returns the first non-empty string.
+func cmp(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 func put(path string, body any) error {

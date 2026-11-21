@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { bandChannels, bandRange, type Band, type Catalog, type Channel } from "./bands";
+import { antennaFit, bandChannels, bandRange, FIT_TEXT, type Antenna, type Band, type Catalog, type Channel } from "./bands";
 import type { DecoderName, DecoderOpts } from "./api";
 
-type Filter = "all" | "stock" | "hf";
+type Filter = "all" | "stock" | "hf" | "fits";
 
 interface Props {
   catalog: Catalog | null;
@@ -14,6 +14,8 @@ interface Props {
   onChannel: (b: Band, c: Channel) => void;
   onDecoder: (d: DecoderName, opts?: DecoderOpts) => void;
   error: string | null;
+  antenna: Antenna | null;
+  onOpenSettings: () => void;
 }
 
 const FREQ_DECODERS = new Set<DecoderName>(["packet", "dsd", "radiosonde"]);
@@ -30,10 +32,14 @@ export function BandPanel(p: Props) {
 
   const bands = useMemo(() => {
     if (!catalog) return [];
-    return catalog.bands.filter(
-      (b) => b.regions.includes(region) && (filter === "all" || (filter === "hf") === b.hf),
-    );
-  }, [catalog, region, filter]);
+    const ant = p.antenna;
+    return catalog.bands.filter((b) => {
+      if (!b.regions.includes(region)) return false;
+      if (filter === "all") return true;
+      if (filter === "fits") return !!ant && antennaFit(ant, b.tune_mhz) === "good";
+      return (filter === "hf") === b.hf;
+    });
+  }, [catalog, region, filter, p.antenna]);
 
   if (!open) {
     return (
@@ -59,15 +65,26 @@ export function BandPanel(p: Props) {
           ))}
         </span>
         <span className="seg">
-          {(["all", "stock", "hf"] as const).map((f) => (
-            <button key={f} className={f === filter ? "on" : ""} onClick={() => setFilter(f)}>
-              {f === "hf" ? "HF only" : f}
+          {(["all", "stock", "hf", "fits"] as const).map((f) => (
+            <button
+              key={f}
+              className={f === filter ? "on" : ""}
+              disabled={f === "fits" && !p.antenna}
+              title={f === "fits" ? (p.antenna ? "Only bands that fit your antenna" : "Set your antenna first") : undefined}
+              onClick={() => setFilter(f)}
+            >
+              {f === "hf" ? "HF only" : f === "fits" ? "fits my antenna" : f}
             </button>
           ))}
         </span>
         <button onClick={() => setOpen(false)} title="Hide bands">«</button>
       </div>
       <div className="bands-list">
+        {catalog && !p.antenna && (
+          <div className="dim pad">
+            <button className="linkbtn" onClick={p.onOpenSettings}>set your antenna</button> to see what you can receive
+          </div>
+        )}
         {!catalog && <div className="dim pad">{p.loadError ? "band catalog unavailable, retrying..." : "loading..."}</div>}
         {bands.map((b) => {
           const [lo, hi] = bandRange(b, region);
@@ -79,6 +96,7 @@ export function BandPanel(p: Props) {
                 <span className="band-name">{b.name}</span>
                 <span className="dim">{fmt(lo)}-{fmt(hi)} MHz</span>
                 {b.hf && <span className="badge">HF · direct sampling</span>}
+                {p.antenna && <FitBadge fit={antennaFit(p.antenna, b.tune_mhz)} />}
               </div>
               {expanded && <Detail band={b} {...p} />}
             </div>
@@ -151,5 +169,14 @@ function Field({ k, v }: { k: string; v: string }) {
       <span className="label">{k}</span>
       <div>{v}</div>
     </div>
+  );
+}
+
+function FitBadge({ fit }: { fit: "good" | "fair" | "poor" }) {
+  return (
+    <span className="fit" title={`Fit for your antenna at the band's tuning frequency: ${fit}`}>
+      <i className={`fitdot ${fit}`} />
+      {FIT_TEXT[fit]}
+    </span>
   );
 }

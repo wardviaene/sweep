@@ -30,11 +30,19 @@ export interface Band {
   channels: Channel[];
 }
 
+export interface Antenna {
+  id: string;
+  name: string;
+  good: [number, number][];
+  fair: [number, number][];
+}
+
 export interface Catalog {
   version?: number;
   default_region: string;
   regions: Record<string, string>;
   bands: Band[];
+  antennas?: Antenna[];
 }
 
 export function bandRange(b: Band, region: string): [number, number] {
@@ -84,4 +92,62 @@ export function saveRegion(r: string): void {
   } catch {
     /* storage unavailable */
   }
+}
+
+export type Fit = "good" | "fair" | "poor";
+
+/** Fit of a frequency (MHz) for an antenna: good range, fair range, else poor. */
+export function antennaFit(a: Antenna, mhz: number): Fit {
+  const inAny = (rs: [number, number][]) => rs.some(([lo, hi]) => mhz >= lo && mhz <= hi);
+  return inAny(a.good) ? "good" : inAny(a.fair) ? "fair" : "poor";
+}
+
+export const FIT_TEXT: Record<Fit, string> = { good: "fits antenna", fair: "off-tune", poor: "needs other antenna" };
+
+export interface PlanStep {
+  id: string;
+  kind: "scan" | "decoder";
+  decoder?: DecoderName;
+  band: Band;
+  label: string;
+  /** estimated seconds */
+  seconds: number;
+  /** set for steps that will not run */
+  skipped?: string;
+}
+
+/** Client-side copy of the sdrd survey plan rules (docs/protocol.md "Survey"). */
+export function planSurvey(cat: Catalog, region: string, ant: Antenna, includeFair: boolean, seconds: number): PlanStep[] {
+  const eligible = cat.bands.filter((b) => {
+    if (!b.regions.includes(region)) return false;
+    if (b.hf && ant.id !== "hfwire") return false;
+    const f = antennaFit(ant, b.tune_mhz);
+    return f === "good" || (includeFair && f === "fair");
+  });
+  const counts = new Map<string, number>();
+  for (const b of eligible) if (b.decoder) counts.set(b.decoder, (counts.get(b.decoder) ?? 0) + 1);
+  const out: PlanStep[] = [];
+  for (const b of eligible) {
+    const [lo, hi] = bandRange(b, region);
+    out.push({
+      id: `scan:${b.id}`,
+      kind: "scan",
+      band: b,
+      label: `${b.name}: band scan`,
+      seconds: Math.max(2, Math.ceil((hi - lo) / 1.6) * 0.5 + 1), // ~0.5 s dwell per 1.6 MHz step, rough
+    });
+    if (b.decoder) {
+      const d = b.decoder;
+      out.push({
+        id: (counts.get(d) ?? 0) > 1 ? `${d}@${b.id}` : d,
+        kind: "decoder",
+        decoder: d,
+        band: b,
+        label: `${b.name}: ${d}`,
+        seconds: seconds,
+        skipped: d === "packet" ? "needs a satellite pass" : undefined,
+      });
+    }
+  }
+  return out;
 }

@@ -22,6 +22,9 @@ func TestParseDSDLine(t *testing.T) {
 	if _, ok := parseDSDLine("Audio input: stdin"); ok {
 		t.Fatal("noise parsed")
 	}
+	if _, ok := parseDSDLine("14:10:16 Sync: -P25p2  P2 Missing Parameters"); ok {
+		t.Fatal("sync without call metadata counted as a call")
+	}
 }
 
 func TestReadFISB(t *testing.T) {

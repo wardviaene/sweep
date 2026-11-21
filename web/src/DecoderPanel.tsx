@@ -49,9 +49,14 @@ interface Props {
   receiver: Receiver | null;
   registerCenter: RegisterCenter;
   onOpenSettings: () => void;
+  /** survey summary line ("Last survey: 4 of 11 found data") or null */
+  surveyLine: string | null;
+  onOpenSurvey: () => void;
+  /** set by the survey to select a decoder view and expand the panel; seq makes repeats distinct */
+  focus: { decoder: DecoderName; seq: number } | null;
 }
 
-export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, meterIds, receiver, registerCenter, onOpenSettings }: Props) {
+export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, meterIds, receiver, registerCenter, onOpenSettings, surveyLine, onOpenSurvey, focus }: Props) {
   const [open, setOpen] = useState(true);
   const [expanded, setExpanded] = useState(loadExpanded);
   const [tab, setTab] = useState<"view" | "raw">("view");
@@ -88,6 +93,13 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
     if (dec && dec.name !== "none") setPick(dec.name);
   }, [dec?.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!focus) return;
+    setPick(focus.decoder);
+    setTab("view");
+    setOpen(true);
+  }, [focus?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => setFreqText(null), [pick]);
   const hasFreq = HAS_FREQ.has(pick);
   const freqShown = freqText ?? (pick !== "radiosonde" && vfoHz !== null ? String(+(vfoHz / 1e6).toFixed(6)) : "");
@@ -107,6 +119,7 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
   const logs = useMemo(() => mine.filter((e) => e.kind === "log").slice(-3), [mine]);
   const rich = pick !== "none";
   const showView = rich && tab === "view";
+  const noData = !mine.some((e) => e.kind !== "log");
 
   return (
     <section className="dec" style={open ? { flex: `0 0 ${expanded ? 75 : 30}%` } : undefined}>
@@ -169,6 +182,9 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
           )}
         </span>
         {error && <span className="err">{error}</span>}
+        {surveyLine && (
+          <button className="linkbtn" onClick={onOpenSurvey} title="Open the survey">{surveyLine}</button>
+        )}
       </div>
       {open && (
         <div className="dec-body">
@@ -178,6 +194,12 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
               <div key={e.id} className="dim">{time(e.ts)} [{e.decoder}] {str(e.data.line)}</div>
             ))}
           </div>
+          {noData && (
+            <div className="dim pad">
+              Not sure what to listen to?{" "}
+              <button className="linkbtn" onClick={onOpenSurvey}>Run 'What's on the air?'</button>
+            </div>
+          )}
           {showView && (
             <div className="dec-view">
               {pick === "adsb" && <AircraftView view={aircraft} receiver={receiver} registerCenter={registerCenter} onOpenSettings={onOpenSettings} />}
@@ -206,7 +228,7 @@ export function DecoderPanel({ status, events, onSet, error, decError, vfoHz, me
           )}
           {!showView && (
             <div className="tablewrap">
-              <All events={mine} />
+              <All events={mine} onOpenSurvey={onOpenSurvey} />
             </div>
           )}
         </div>
@@ -231,7 +253,7 @@ function Table({ head, rows, empty }: { head: string[]; rows: ReactNode[][]; emp
   );
 }
 
-function All({ events }: { events: DecEvent[] }) {
+function All({ events }: { events: DecEvent[]; onOpenSurvey: () => void }) {
   const rows = events
     .slice(-MAX_ROWS)
     .reverse()

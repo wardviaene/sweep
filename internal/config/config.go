@@ -24,6 +24,8 @@ type Config struct {
 	// MeterIDs are the utility meters the user owns. The meters decoder
 	// shows only these; every other meter is counted but never published.
 	MeterIDs []string `json:"meter_ids,omitempty"`
+	// Antenna is an antenna id from the band catalog (nil = unknown).
+	Antenna *string `json:"antenna,omitempty"`
 }
 
 // Store loads and saves the config file.
@@ -68,6 +70,10 @@ func (s *Store) Get() Config {
 		c.Receiver = &r
 	}
 	c.MeterIDs = append([]string(nil), c.MeterIDs...)
+	if c.Antenna != nil {
+		a := *c.Antenna
+		c.Antenna = &a
+	}
 	return c
 }
 
