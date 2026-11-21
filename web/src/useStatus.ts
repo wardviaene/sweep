@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { getStatus, type Status } from "./api";
 
 /** Polls GET /api/status every `intervalMs`. */
-export function useStatus(intervalMs = 2000): { status: Status | null; error: boolean } {
+export function useStatus(intervalMs = 2000): { status: Status | null; error: boolean; applyStatus: (s: Status) => void } {
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState(false);
 
@@ -26,5 +26,5 @@ export function useStatus(intervalMs = 2000): { status: Status | null; error: bo
     };
   }, [intervalMs]);
 
-  return { status, error };
+  return { status, error, applyStatus: setStatus };
 }

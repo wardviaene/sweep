@@ -41,6 +41,7 @@ type Config struct {
 	RtlTcpPort int
 	CenterHz   uint32
 	SampleRate uint32
+	GainDB     *float64 // nil = auto
 	FFTSize    int
 	FPS        int
 	MinDB      float64
@@ -138,6 +139,7 @@ func New(cfg Config, sink Sink) *Radio {
 		st: Status{
 			CenterHz:   cfg.CenterHz,
 			SampleRate: cfg.SampleRate,
+			GainDB:     cfg.GainDB,
 			FFTSize:    cfg.FFTSize,
 			FPS:        cfg.FPS,
 			Mode:       "spectrum",

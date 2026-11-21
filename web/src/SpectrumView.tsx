@@ -26,7 +26,18 @@ function fitCanvas(c: HTMLCanvasElement): Size {
   return { w: r.width, h: r.height };
 }
 
-export function SpectrumView({ stream, meta }: { stream: SpectrumStream; meta: Meta | null }) {
+interface Props {
+  stream: SpectrumStream;
+  meta: Meta | null;
+  onTuneHz: (hz: number) => void; // click-to-tune (already rounded to 1 kHz)
+  onWheel: (dir: 1 | -1) => void; // +1 = step up
+}
+
+export function SpectrumView({ stream, meta, onTuneHz, onWheel }: Props) {
+  const onTuneRef = useRef(onTuneHz);
+  const onWheelRef = useRef(onWheel);
+  onTuneRef.current = onTuneHz;
+  onWheelRef.current = onWheel;
   const specRef = useRef<HTMLCanvasElement>(null);
   const axisRef = useRef<HTMLCanvasElement>(null);
   const wfRef = useRef<HTMLCanvasElement>(null);
@@ -151,14 +162,17 @@ export function SpectrumView({ stream, meta }: { stream: SpectrumStream; meta: M
     const pushWaterfall = (frame: Uint8Array) => {
       const W = wf.width;
       const H = wf.height;
-      if (!row || row.width !== W) {
-        row = wctx.createImageData(W, 1);
+      // one CSS pixel per frame, so the waterfall scrolls at the same speed on retina screens
+      const rh = Math.max(1, Math.round(window.devicePixelRatio || 1));
+      if (!row || row.width !== W || row.height !== rh) {
+        row = wctx.createImageData(W, rh);
         row32 = new Uint32Array(row.data.buffer);
         rowU8 = new Uint8Array(W);
       }
       resample(frame, W, rowU8);
       for (let x = 0; x < W; x++) row32![x] = LUT32[rowU8[x]!]!;
-      wctx.drawImage(wf, 0, 0, W, H - 1, 0, 1, W, H - 1);
+      for (let y = 1; y < rh; y++) row32!.copyWithin(y * W, 0, W);
+      wctx.drawImage(wf, 0, 0, W, H - rh, 0, rh, W, H - rh);
       wctx.putImageData(row, 0, 0);
     };
 
@@ -224,6 +238,29 @@ export function SpectrumView({ stream, meta }: { stream: SpectrumStream; meta: M
       tip.style.display = "none";
     };
     const targets = [spec, axis, wf];
+    let down: { x: number; y: number } | null = null;
+    const onDown = (ev: MouseEvent) => {
+      down = { x: ev.clientX, y: ev.clientY };
+    };
+    const onClick = (ev: MouseEvent) => {
+      const m = metaRef.current;
+      const d = down;
+      down = null;
+      if (!m || !d || Math.hypot(ev.clientX - d.x, ev.clientY - d.y) > 4) return;
+      const sr = spec.getBoundingClientRect();
+      const x = Math.min(sr.width, Math.max(0, ev.clientX - sr.left));
+      const hz = m.center_hz - m.sample_rate / 2 + (x / sr.width) * m.sample_rate;
+      onTuneRef.current(Math.round(hz / 1000) * 1000);
+    };
+    const onWheelEv = (ev: WheelEvent) => {
+      ev.preventDefault();
+      if (ev.deltaY !== 0) onWheelRef.current(ev.deltaY < 0 ? 1 : -1);
+    };
+    for (const c of [spec, wf]) {
+      c.addEventListener("mousedown", onDown);
+      c.addEventListener("click", onClick);
+      c.addEventListener("wheel", onWheelEv, { passive: false });
+    }
     for (const c of targets) {
       c.addEventListener("mousemove", onMove);
       c.addEventListener("mouseleave", onLeave);
@@ -235,6 +272,11 @@ export function SpectrumView({ stream, meta }: { stream: SpectrumStream; meta: M
       for (const c of targets) {
         c.removeEventListener("mousemove", onMove);
         c.removeEventListener("mouseleave", onLeave);
+      }
+      for (const c of [spec, wf]) {
+        c.removeEventListener("mousedown", onDown);
+        c.removeEventListener("click", onClick);
+        c.removeEventListener("wheel", onWheelEv);
       }
     };
   }, [stream]);

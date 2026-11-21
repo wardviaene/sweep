@@ -22,7 +22,15 @@ export interface TuneParams {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
   if (!res.ok) {
-    throw new Error(`${init?.method ?? "GET"} ${path}: ${res.status} ${await res.text()}`);
+    const text = await res.text();
+    let msg = text;
+    try {
+      const j = JSON.parse(text) as { error?: string };
+      if (j.error) msg = j.error;
+    } catch {
+      /* not JSON */
+    }
+    throw new Error(init?.method === "POST" ? msg : `${path}: ${res.status} ${msg}`);
   }
   return (await res.json()) as T;
 }

@@ -19,7 +19,11 @@ type Hub struct {
 	mu      sync.Mutex
 	clients map[*client]struct{}
 	meta    []byte
+	m       radio.Meta
+	hist    [][]byte // recent frames, oldest first, for /api/spectrum and /api/peaks
 }
+
+const histLen = 40
 
 type client struct {
 	ch chan wsMsg
@@ -37,13 +41,24 @@ func NewHub() *Hub { return &Hub{clients: map[*client]struct{}{}} }
 func (h *Hub) Meta(m radio.Meta) {
 	b, _ := json.Marshal(m)
 	h.mu.Lock()
-	h.meta = b
+	if h.m.CenterHz != m.CenterHz || h.m.SampleRate != m.SampleRate || h.m.Bins != m.Bins {
+		h.hist = nil
+	}
+	h.meta, h.m = b, m
 	h.mu.Unlock()
 	h.send(wsMsg{websocket.MessageText, b}, true)
 }
 
 // Frame broadcasts one binary spectrum frame.
-func (h *Hub) Frame(b []byte) { h.send(wsMsg{websocket.MessageBinary, b}, false) }
+func (h *Hub) Frame(b []byte) {
+	h.mu.Lock()
+	if len(h.hist) >= histLen {
+		h.hist = append(h.hist[:0], h.hist[1:]...)
+	}
+	h.hist = append(h.hist, b)
+	h.mu.Unlock()
+	h.send(wsMsg{websocket.MessageBinary, b}, false)
+}
 
 func (h *Hub) send(m wsMsg, important bool) {
 	h.mu.Lock()
@@ -100,6 +115,22 @@ func Handler(r *radio.Radio, hub *Hub, static fs.FS) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, st)
+	})
+	mux.HandleFunc("GET /api/spectrum", func(w http.ResponseWriter, req *http.Request) {
+		snap, err := hub.snapshot(req)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, snap)
+	})
+	mux.HandleFunc("GET /api/peaks", func(w http.ResponseWriter, req *http.Request) {
+		res, err := hub.peaks(req)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, res)
 	})
 	mux.HandleFunc("GET /ws/spectrum", func(w http.ResponseWriter, req *http.Request) {
 		serveSpectrum(w, req, hub)

@@ -4,6 +4,7 @@ envcheck:
 	@bash scripts/envcheck.sh
 
 build:
+	go build -o bin/sdrctl ./cmd/sdrctl
 	go build -o bin/sdrd ./cmd/sdrd
 
 test:
