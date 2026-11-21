@@ -1,0 +1,6 @@
+/bin/
+/web/node_modules/
+/web/dist/
+*.cu8.tmp
+.DS_Store
+/HANDOFF.md
