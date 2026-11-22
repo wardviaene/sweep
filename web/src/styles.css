@@ -375,3 +375,11 @@ button.danger { border-color: var(--bad); color: var(--bad); }
 .radio-pill.busy .pill-dot { color: var(--ok); }
 .radio-pill .pill-stop { flex: none; }
 .scn-intro { margin: 0 0 6px; }
+
+.rangectl {
+  position: absolute; top: 4px; right: 6px; display: flex; gap: 6px; align-items: center;
+  padding: 2px 6px; background: rgba(17, 24, 35, 0.85); border: 1px solid var(--border); border-radius: 3px;
+  font-size: 11px;
+}
+.rangectl input[type="range"] { width: 70px; }
+.rangectl button.on { border-color: var(--ok); color: var(--ok); }

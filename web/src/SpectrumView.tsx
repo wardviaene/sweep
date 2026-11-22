@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LUT32 } from "./colormap";
+import { AutoRange, buildRemap, loadRange, saveRange, type RangeSettings } from "./autorange";
 import { fmtMHz, niceStep, resample } from "./draw";
 import type { SpectrumStream } from "./useSpectrum";
 import type { Meta } from "./spectrumSocket";
@@ -115,6 +116,18 @@ export function SpectrumView({ stream, meta, bandViews, vfo, scan = null, onSetV
   const metaRef = useRef<Meta | null>(meta);
   const clearWf = useRef<() => void>(() => {});
   const redraw = useRef<() => void>(() => {});
+  const [rs, setRs] = useState<RangeSettings>(loadRange);
+  const rsRef = useRef<RangeSettings>(rs);
+  const [shown, setShown] = useState<[number, number] | null>(null);
+  const shownRef = useRef<(r: [number, number]) => void>(() => {});
+  shownRef.current = (r) => setShown(r);
+  const patchRs = (p: Partial<RangeSettings>) => {
+    const n = { ...rsRef.current, ...p };
+    rsRef.current = n;
+    saveRange(n);
+    setRs(n);
+    redraw.current();
+  };
 
   // Clear the waterfall when the tuning/scale changes.
   useEffect(() => {
@@ -156,6 +169,19 @@ export function SpectrumView({ stream, meta, bandViews, vfo, scan = null, onSetV
     let rowU8 = new Uint8Array(0);
     let row: ImageData | null = null;
     let row32: Uint32Array | null = null;
+    const ar = new AutoRange();
+    const remap = new Uint32Array(256);
+    let lastShown = 0;
+    let curRange: [number, number] | null = null;
+
+    /** Current display range in dB (null until known). */
+    const effRange = (m: Meta): [number, number] => {
+      const s = rsRef.current;
+      if (!s.auto) return s.max > s.min + 1 ? [s.min, s.max] : [s.min, s.min + 1];
+      return ar.range() ?? [m.min_db, m.max_db];
+    };
+    // dB axis of the spectrum trace
+    const traceRange = (m: Meta): [number, number] => (rsRef.current.trace ? effRange(m) : [m.min_db, m.max_db]);
 
     const drawSpectrum = (frame: Uint8Array | null, m: Meta | null) => {
       const dpr = window.devicePixelRatio || 1;
@@ -166,10 +192,11 @@ export function SpectrumView({ stream, meta, bandViews, vfo, scan = null, onSetV
       sctx.textBaseline = "top";
       if (!m) return;
       // dB grid
-      const step = niceStep(m.max_db - m.min_db, 8);
+      const [dmin, dmax] = traceRange(m);
+      const step = niceStep(dmax - dmin, 8);
       sctx.lineWidth = 1;
-      for (let db = Math.ceil(m.min_db / step) * step; db <= m.max_db; db += step) {
-        const y = Math.round(H - ((db - m.min_db) / (m.max_db - m.min_db)) * H) + 0.5;
+      for (let db = Math.ceil(dmin / step) * step; db <= dmax; db += step) {
+        const y = Math.round(H - ((db - dmin) / (dmax - dmin)) * H) + 0.5;
         sctx.strokeStyle = GRID;
         sctx.beginPath();
         sctx.moveTo(0, y);
@@ -207,8 +234,9 @@ export function SpectrumView({ stream, meta, bandViews, vfo, scan = null, onSetV
       if (line.length !== W) line = new Float32Array(W);
       resample(frame, W, line);
       sctx.beginPath();
+      const kdb = (m.max_db - m.min_db) / 255;
       for (let x = 0; x < W; x++) {
-        const y = H - (line[x]! / 255) * H;
+        const y = H - (((m.min_db + line[x]! * kdb - dmin) / (dmax - dmin)) * H);
         if (x === 0) sctx.moveTo(x, y);
         else sctx.lineTo(x, y);
       }
@@ -266,7 +294,10 @@ export function SpectrumView({ stream, meta, bandViews, vfo, scan = null, onSetV
       wctx.fillStyle = "#000";
       wctx.fillRect(0, 0, wf.width, wf.height);
     };
-    clearWf.current = wfClear;
+    clearWf.current = () => {
+      ar.reset();
+      wfClear();
+    };
 
     const pushWaterfall = (frame: Uint8Array) => {
       const W = wf.width;
@@ -279,7 +310,15 @@ export function SpectrumView({ stream, meta, bandViews, vfo, scan = null, onSetV
         rowU8 = new Uint8Array(W);
       }
       resample(frame, W, rowU8);
-      for (let x = 0; x < W; x++) row32![x] = LUT32[rowU8[x]!]!;
+      const m = metaRef.current;
+      if (m) {
+        const [lo, hi] = effRange(m);
+        curRange = [lo, hi];
+        buildRemap(remap, LUT32, m.min_db, m.max_db, lo, hi, rsRef.current.contrast);
+      } else {
+        remap.set(LUT32);
+      }
+      for (let x = 0; x < W; x++) row32![x] = remap[rowU8[x]!]!;
       for (let y = 1; y < rh; y++) row32!.copyWithin(y * W, 0, W);
       wctx.drawImage(wf, 0, 0, W, H - rh, 0, rh, W, H - rh);
       wctx.putImageData(row, 0, 0);
@@ -386,8 +425,14 @@ export function SpectrumView({ stream, meta, bandViews, vfo, scan = null, onSetV
 
     const onFrame = (frame: Uint8Array, m: Meta) => {
       metaRef.current = m;
+      const now = performance.now() / 1000;
+      if (rsRef.current.auto) ar.update(frame, m.min_db, m.max_db, now);
       drawSpectrum(frame, m);
       pushWaterfall(frame);
+      if (curRange && now - lastShown > 0.5) {
+        lastShown = now;
+        shownRef.current(curRange); // twice a second, for the readout only
+      }
     };
 
     stream.listeners.add(onFrame);
@@ -413,7 +458,8 @@ export function SpectrumView({ stream, meta, bandViews, vfo, scan = null, onSetV
       const over = ev.currentTarget as HTMLCanvasElement;
       if (over === spec) {
         const y = ev.clientY - sr.top;
-        db = m.max_db - (y / sr.height) * (m.max_db - m.min_db);
+        const [dmin, dmax] = traceRange(m);
+        db = dmax - (y / sr.height) * (dmax - dmin);
       } else if (frame && frame.length === m.bins) {
         const i = Math.min(m.bins - 1, Math.max(0, Math.floor((x / sr.width) * m.bins)));
         db = m.min_db + (frame[i]! * (m.max_db - m.min_db)) / 255;
@@ -512,6 +558,31 @@ export function SpectrumView({ stream, meta, bandViews, vfo, scan = null, onSetV
       </div>
       <div ref={cursorRef} className="cursor" />
       <div ref={tipRef} className="tip" />
+      <div className="rangectl">
+        <button
+          className={rs.auto ? "on" : ""}
+          title="Auto: waterfall colors follow the noise floor (20th percentile) and the peaks (99.5th). Manual: fixed dB range."
+          onClick={() => patchRs(rs.auto ? { auto: false, ...(shown ? { min: Math.round(shown[0]), max: Math.round(shown[1]) } : {}) } : { auto: true })}
+        >
+          {rs.auto ? "auto" : "manual"}
+        </button>
+        {rs.auto ? (
+          <span className="dim">{shown ? `${shown[0].toFixed(0)}…${shown[1].toFixed(0)} dB` : ""}</span>
+        ) : (
+          <>
+            <input type="range" min={-130} max={0} step={1} value={rs.min} title="Min dB (dark)"
+              onChange={(e) => patchRs({ min: Math.min(+e.target.value, rs.max - 5) })} />
+            <input type="range" min={-130} max={0} step={1} value={rs.max} title="Max dB (hot)"
+              onChange={(e) => patchRs({ max: Math.max(+e.target.value, rs.min + 5) })} />
+            <span className="dim">{rs.min}…{rs.max}</span>
+          </>
+        )}
+        <input type="range" min={-1} max={1} step={0.05} value={rs.contrast} title="Contrast (right: darker floor)"
+          onChange={(e) => patchRs({ contrast: +e.target.value })} onDoubleClick={() => patchRs({ contrast: 0 })} />
+        <label className="dim" title="Also apply the range to the spectrum trace's dB axis">
+          <input type="checkbox" checked={rs.trace} onChange={(e) => patchRs({ trace: e.target.checked })} /> trace
+        </label>
+      </div>
     </div>
   );
 }
