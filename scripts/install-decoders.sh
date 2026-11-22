@@ -2,7 +2,8 @@
 # Build the decoders that aren't in Homebrew, at pinned commits, into
 # ~/.local/share/sweep/bin (sdrd searches there first; override with -tool-dir).
 #
-#   rs1729/RS            radiosondes (rs41mod, dfm09mod, m10mod, lms6Xmod, ...)
+#   rs1729/RS            radiosondes (rs41mod, dfm09mod, m10mod, lms6Xmod, ...) and
+#                        mk2a1680mod (US 1680 MHz LMS6/MkIIa, IQ input)
 #   mutability/dump978   UAT 978 (dump978, uat2json, uat2text)
 #   lwvmobile/dsd-fme    DMR / D-STAR / YSF / NXDN digital voice
 #
@@ -25,6 +26,7 @@ fetch() { # repo dir commit
 
 fetch rs1729/RS RS ce448555d34da5ca01f1a526e838c4f7be464481
 make -C "$SRC/RS/demod/mod" CC=cc -j8 >/dev/null
+cc -Ofast "$SRC/RS/mk2a/mk2a1680mod.c" -lm -o "$BIN/mk2a1680mod"
 cp "$SRC"/RS/demod/mod/{rs41mod,dfm09mod,m10mod,lms6Xmod,mXXmod,imet54mod,rs92mod} "$BIN/"
 
 fetch mutability/dump978 dump978 c7c4ad2f953692eadc5702aa8f059ea93fba2934

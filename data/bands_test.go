@@ -69,3 +69,36 @@ func TestBandsValid(t *testing.T) {
 		}
 	}
 }
+
+func TestSonde1680AndLogper850(t *testing.T) {
+	var cat struct {
+		Bands []struct {
+			ID      string  `json:"id"`
+			Lo      float64 `json:"lo_mhz"`
+			Hi      float64 `json:"hi_mhz"`
+			Mode    string  `json:"mode"`
+			Decoder *string `json:"decoder"`
+		} `json:"bands"`
+		Antennas []struct {
+			ID   string       `json:"id"`
+			Good [][2]float64 `json:"good"`
+		} `json:"antennas"`
+	}
+	if err := json.Unmarshal(Bands, &cat); err != nil {
+		t.Fatal(err)
+	}
+	okB, okA := false, false
+	for _, b := range cat.Bands {
+		if b.ID == "sonde1680" {
+			okB = b.Lo == 1676 && b.Hi == 1682 && b.Mode == "none" && b.Decoder != nil && *b.Decoder == "radiosonde"
+		}
+	}
+	for _, a := range cat.Antennas {
+		if a.ID == "logper850" {
+			okA = len(a.Good) == 1 && a.Good[0] == [2]float64{850, 1766}
+		}
+	}
+	if !okB || !okA {
+		t.Fatalf("band %v antenna %v", okB, okA)
+	}
+}

@@ -34,7 +34,7 @@ func TestPlanJPole(t *testing.T) {
 
 func TestPlanFairAndHF(t *testing.T) {
 	fair := ids(plan(t, "jpole", "us", true))
-	for _, id := range []string{"scan:sonde", "radiosonde", "scan:air", "scan:frs"} {
+	for _, id := range []string{"scan:sonde", "radiosonde@sonde", "scan:air", "scan:frs"} {
 		if !slices.Contains(fair, id) {
 			t.Errorf("include_fair plan lacks %s: %v", id, fair)
 		}

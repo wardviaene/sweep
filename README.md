@@ -64,7 +64,7 @@ Set the receiver location (gear icon; stored only in `~/.config/sweep/config.jso
 | AIS | Ships on the map | direwolf |
 | rtl_433 | Sensors (temperature, humidity, …) with sparklines | rtl_433 |
 | Utility meters | Your own meter only; other meters are counted, never shown | rtl_433 |
-| Radiosondes | Weather balloon track and sounding profile | rs1729 decoders |
+| Radiosondes | Weather balloon track and sounding profile (400 MHz and US 1680 MHz NWS) | rs1729 decoders |
 | Digital voice | DMR/D-STAR/YSF call log and audio (amateur bands only, never decrypts) | dsd-fme |
 | SSTV | Pictures, decoded in Go | built in |
 | Voice transcription | Text for every scanned call, filterable and searchable | whisper.cpp |

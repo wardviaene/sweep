@@ -224,7 +224,7 @@ func (m *Manager) Start(name string, opt Options) error {
 	// Report immediate failures (missing tool, bad tune, no sonde found) to the caller.
 	wait := 1500 * time.Millisecond
 	if name == "radiosonde" && opt.FreqHz == 0 {
-		wait = 8 * time.Second // the auto-search scans three windows first
+		wait = 12 * time.Second // the auto-search scans five windows first
 	}
 	select {
 	case err := <-ready:

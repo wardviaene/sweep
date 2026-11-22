@@ -105,3 +105,37 @@ func TestAmateurBand(t *testing.T) {
 		}
 	}
 }
+
+func TestSonde1680Args(t *testing.T) {
+	args, center := sonde1680Args(1_680_000_000)
+	if center != 1_680_000_000-sonde1680Offset {
+		t.Fatalf("center %d", center)
+	}
+	if len(args) < 2 || args[0] != "--IQ" || args[1] != "0.25" {
+		t.Fatalf("args %v", args)
+	}
+	has := map[string]bool{}
+	for _, a := range args {
+		has[a] = true
+	}
+	if !has["--json"] {
+		t.Fatalf("no --json: %v", args)
+	}
+	if !is1680(1_676_500_000) || is1680(403_000_000) || is1680(1_690_000_000) {
+		t.Fatal("is1680 range")
+	}
+	if !inSondeBand(403e6) || !inSondeBand(1680e6) || inSondeBand(900e6) {
+		t.Fatal("inSondeBand")
+	}
+}
+
+func TestWavHeaderFmt(t *testing.T) {
+	h := wavHeaderFmt(1_200_000, 2, 8)
+	if len(h) != 44 || binary.LittleEndian.Uint16(h[22:]) != 2 || binary.LittleEndian.Uint16(h[34:]) != 8 ||
+		binary.LittleEndian.Uint16(h[32:]) != 2 || binary.LittleEndian.Uint32(h[28:]) != 2_400_000 {
+		t.Fatalf("%x", h)
+	}
+	if !bytes.Equal(wavHeader(48000)[22:24], []byte{1, 0}) {
+		t.Fatal("mono default broken")
+	}
+}

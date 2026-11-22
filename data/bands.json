@@ -510,6 +510,27 @@
       "channels": []
     },
     {
+      "id": "sonde1680",
+      "name": "Radiosondes 1680 MHz (US NWS)",
+      "regions": [
+        "us"
+      ],
+      "lo_mhz": 1676.0,
+      "hi_mhz": 1682.0,
+      "tune_mhz": 1680.0,
+      "hf": false,
+      "mode": "none",
+      "decoder": "radiosonde",
+      "on_air": "Most US National Weather Service balloons (Lockheed LMS6-1680 / Sippican MkIIa), launched about 00 and 12 UTC. Wide FM (about +/-50 kHz), so it is decoded from raw IQ rather than the NFM audio path.",
+      "decode_with": [
+        "rs1729 RS mk2a1680mod"
+      ],
+      "antenna": "850 MHz-6.5 GHz log-periodic or a 1.68 GHz yagi/dish; RTL-SDR tuners top out near 1766 MHz",
+      "tx_license": "Receive only",
+      "starter": "sdrctl decode radiosonde during a launch window; it searches 400-406 and 1676-1682 MHz",
+      "channels": []
+    },
+    {
       "id": "70cm",
       "name": "70 cm amateur",
       "regions": [
@@ -838,6 +859,17 @@
           1100
         ]
       ]
+    },
+    {
+      "id": "logper850",
+      "name": "Log-periodic 850 MHz-6.5 GHz",
+      "good": [
+        [
+          850,
+          1766
+        ]
+      ],
+      "fair": []
     },
     {
       "id": "jpole",

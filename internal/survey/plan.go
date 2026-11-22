@@ -284,6 +284,10 @@ func universe(c *Catalog, ant Antenna, region string, seconds int) []Step {
 			s.tuneHz = f
 		case "packet":
 			s.State, s.Reason = "skipped", "needs a satellite pass; start it manually with a frequency"
+		case "radiosonde":
+			if b.ID == "sonde1680" {
+				s.State, s.Reason = "skipped", "the 400 MHz radiosonde step also searches 1676-1682 MHz"
+			}
 		}
 		out = append(out, s)
 	}
